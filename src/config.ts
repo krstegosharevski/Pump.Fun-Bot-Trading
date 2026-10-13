@@ -1,0 +1,97 @@
+import dotenv from "dotenv";
+import { z } from "zod";
+
+dotenv.config({ quiet: true });
+
+const num = (def: number) => z.coerce.number().default(def);
+
+const schema = z.object({
+  // --- Mode & connections ---
+  MODE: z.enum(["paper", "live"]).default("paper"),
+  LIVE_CONFIRM: z.string().default(""),
+  RPC_URL: z.string().default("https://api.mainnet-beta.solana.com"),
+  PUMPPORTAL_WS: z.string().default("wss://pumpportal.fun/api/data"),
+  PUMPPORTAL_API_KEY: z.string().optional(),
+  DASHBOARD_PORT: num(3000),
+  WALLET_PATH: z.string().default("wallet/bot-wallet.json"),
+  POLL_MS: num(1000),
+  MAX_WATCHLIST: num(80),
+
+  // --- Bankroll & sizing ---
+  PAPER_START_USD: num(25),
+  PAPER_START_SOL: num(0.15),
+  TRADE_SIZE_SOL: num(0.02),
+  MAX_OPEN_POSITIONS: num(2),
+  MIN_SOL_RESERVE: num(0.02),
+
+  // --- Costs (used by the paper simulator and live safety checks) ---
+  PRIORITY_FEE_SOL: num(0.0002),
+  BASE_FEE_SOL: num(0.000005),
+  PUMP_FEE_PCT: num(1.25),
+  PUMPPORTAL_FEE_PCT: num(0.5),
+  ATA_RENT_SOL: num(0.00203928),
+  BUY_SLIPPAGE_PCT: num(20),
+  SELL_SLIPPAGE_PCT: num(40),
+
+  // --- Paper simulator ---
+  SIM_LATENCY_MS: num(1500),
+  SIM_FAIL_RATE: num(0.05),
+
+  // --- Momentum entry ---
+  WATCH_WINDOW_SEC: num(45),
+  MAX_DEV_BUY_PCT: num(10),
+  SKIP_MAYHEM: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  MIN_MCAP_GAIN_PCT: num(25),
+  MIN_REAL_SOL: num(3),
+  MAX_CURVE_PROGRESS_PCT: num(50),
+  RISING_LOOKBACK_SEC: num(5),
+
+  // --- Exits ---
+  TAKE_PROFIT_PCT: num(40),
+  STOP_LOSS_PCT: num(20),
+  TRAIL_ACTIVATE_PCT: num(20),
+  TRAIL_DROP_PCT: num(15),
+  MAX_HOLD_SEC: num(180),
+
+  // --- Risk guard ---
+  DAILY_LOSS_LIMIT_PCT: num(30),
+  MAX_CONSEC_LOSSES: num(3),
+  COOLDOWN_MIN: num(5),
+  MAX_TRADES_PER_HOUR: num(20),
+
+  // --- Live safety ---
+  EXTRA_ALLOWED_PROGRAMS: z.string().default(""),
+});
+
+export type Config = z.infer<typeof schema>;
+export type RunMode = "watch" | "paper" | "live";
+
+/** Defaults only (no .env); used by tests. */
+export function defaultConfig(overrides: Partial<Config> = {}): Config {
+  return { ...schema.parse({}), ...overrides };
+}
+
+export function loadConfig(argv = process.argv): { cfg: Config; runMode: RunMode } {
+  // Treat empty values in .env ("KEY=") as "not set" so defaults apply.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([, v]) => v !== undefined && v.trim() !== ""),
+  );
+  const parsed = schema.safeParse(env);
+  if (!parsed.success) {
+    throw new Error("Invalid settings in .env:\n" + z.prettifyError(parsed.error));
+  }
+  const cfg = parsed.data;
+
+  const wantsLive = argv.includes("--live");
+  if (wantsLive && (cfg.MODE !== "live" || cfg.LIVE_CONFIRM !== "YES_REAL_MONEY")) {
+    throw new Error(
+      "Refusing to start LIVE trading. To trade real money you must set BOTH in .env:\n" +
+        "  MODE=live\n  LIVE_CONFIRM=YES_REAL_MONEY",
+    );
+  }
+  const runMode: RunMode = argv.includes("--watch-only") ? "watch" : wantsLive ? "live" : "paper";
+  return { cfg, runMode };
+}

@@ -1,0 +1,33 @@
+{
+  "name": "pumpfun-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pump.fun momentum trading bot with paper (fake money) and live modes",
+  "scripts": {
+    "watch": "tsx src/index.ts --watch-only",
+    "dev": "tsx src/index.ts",
+    "live": "tsx src/index.ts --live",
+    "live:check": "tsx scripts/liveCheck.ts",
+    "report": "tsx scripts/report.ts",
+    "wallet:new": "tsx scripts/newWallet.ts",
+    "wallet:withdraw": "tsx scripts/withdraw.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^18.0.6",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

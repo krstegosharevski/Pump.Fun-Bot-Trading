@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PumpFun Bot</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #6b7280; --border: #e3e6eb;
+    --pos: #0f9d58; --neg: #d93025; --accent: #3b5bdb; --paper: #3b5bdb; --live: #d93025;
+    --chart: #3b5bdb; --chart-fill: rgba(59, 91, 219, 0.10); --row: #fafbfc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --text: #e7e9ee; --muted: #8b93a3; --border: #262b35;
+      --pos: #34c77b; --neg: #ff6b5e; --accent: #7c96ff; --paper: #7c96ff; --live: #ff6b5e;
+      --chart: #7c96ff; --chart-fill: rgba(124, 150, 255, 0.12); --row: #1b1f27;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 18px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .badge { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; color: #fff; }
+  .badge.paper { background: var(--paper); } .badge.live { background: var(--live); }
+  .pill { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--pos); } .dot.bad { background: var(--neg); }
+  .spacer { flex: 1; }
+  button { font: inherit; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.danger { color: var(--neg); }
+  .notice { display: none; margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--neg); color: var(--neg); background: var(--panel); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .kpi .label { font-size: 12px; color: var(--muted); }
+  .kpi .value { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
+  .section { margin-bottom: 16px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+  svg { display: block; width: 100%; height: 220px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  tbody tr:nth-child(even) { background: var(--row); }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  .empty { color: var(--muted); padding: 10px 2px; }
+  .log { font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .log .warn { color: #c77c00; } .log .error { color: var(--neg); } .log .trade { color: var(--pos); }
+  .muted { color: var(--muted); }
+  footer { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PumpFun Bot</h1>
+    <span id="mode" class="badge paper">PAPER</span>
+    <span class="pill"><span id="feedDot" class="dot"></span><span id="feedText">Feed</span></span>
+    <span class="pill"><span id="rpcDot" class="dot"></span><span id="rpcText">RPC</span></span>
+    <span class="pill" id="riskText"></span>
+    <span class="spacer"></span>
+    <button id="pauseBtn">Pause</button>
+    <button id="closeBtn" class="danger">Close all</button>
+  </header>
+
+  <div id="notice" class="notice"></div>
+
+  <div class="grid">
+    <div class="card kpi"><div class="label">Equity</div><div class="value" id="equity">–</div><div class="sub" id="equityUsd"></div></div>
+    <div class="card kpi"><div class="label">Total P&amp;L</div><div class="value" id="pnl">–</div><div class="sub" id="pnlSub"></div></div>
+    <div class="card kpi"><div class="label">Cash</div><div class="value" id="cash">–</div><div class="sub" id="cashSub"></div></div>
+    <div class="card kpi"><div class="label">Win rate</div><div class="value" id="winrate">–</div><div class="sub" id="wl"></div></div>
+    <div class="card kpi"><div class="label">Fees paid</div><div class="value" id="fees">–</div><div class="sub" id="feesSub"></div></div>
+    <div class="card kpi"><div class="label">Watching</div><div class="value" id="watching">–</div><div class="sub" id="seen"></div></div>
+  </div>
+
+  <div class="card section">
+    <h2>Equity (SOL)</h2>
+    <svg id="chart" viewBox="0 0 800 220" preserveAspectRatio="none" role="img" aria-label="Equity over time"></svg>
+  </div>
+
+  <div class="card section">
+    <h2>Open positions</h2>
+    <div class="table-wrap" id="positions"></div>
+  </div>
+
+  <div class="two">
+    <div class="card section">
+      <h2>Recent trades</h2>
+      <div class="table-wrap" id="trades"></div>
+    </div>
+    <div class="card section">
+      <h2>Activity</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <footer id="settings"></footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sol = (x, d = 4) => (x == null || !isFinite(x) ? "–" : x.toFixed(d));
+const signed = (x, d = 4) => (x >= 0 ? "+" : "") + x.toFixed(d);
+const pctTxt = (x) => (x >= 0 ? "+" : "") + x.toFixed(1) + "%";
+const cls = (x) => (x > 0 ? "pos" : x < 0 ? "neg" : "");
+const dur = (s) => (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s");
+const time = (t) => new Date(t).toLocaleTimeString();
+let state = null;
+
+async function act(path) {
+  await fetch(path, { method: "POST", headers: { "X-Bot-Action": "1" } });
+  refresh();
+}
+$("pauseBtn").onclick = () => act(state?.risk.paused ? "/api/resume" : "/api/pause");
+$("closeBtn").onclick = () => {
+  if (confirm("Sell every open position now and pause new entries?")) act("/api/close-all");
+};
+
+function drawChart(points, startSol) {
+  const svg = $("chart");
+  if (points.length < 2) { svg.innerHTML = '<text x="400" y="110" text-anchor="middle" fill="currentColor" opacity="0.5" font-size="14">Collecting data…</text>'; return; }
+  const W = 800, H = 220, pad = 8;
+  const ys = points.map((p) => p.equitySol).concat([startSol]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (hi - lo < 1e-6) { hi += 0.001; lo -= 0.001; }
+  const t0 = points[0].t, t1 = points[points.length - 1].t || t0 + 1;
+  const x = (t) => pad + ((t - t0) / Math.max(1, t1 - t0)) * (W - 2 * pad);
+  const y = (v) => H - pad - ((v - lo) / (hi - lo)) * (H - 2 * pad);
+  const line = points.map((p, i) => (i ? "L" : "M") + x(p.t).toFixed(1) + "," + y(p.equitySol).toFixed(1)).join(" ");
+  const area = line + ` L${x(t1).toFixed(1)},${H - pad} L${x(t0).toFixed(1)},${H - pad} Z`;
+  svg.innerHTML =
+    `<path d="${area}" fill="var(--chart-fill)"/>` +
+    `<line x1="${pad}" x2="${W - pad}" y1="${y(startSol)}" y2="${y(startSol)}" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1" vector-effect="non-scaling-stroke"/>` +
+    `<path d="${line}" fill="none" stroke="var(--chart)" stroke-width="2" vector-effect="non-scaling-stroke"/>` +
+    `<text x="${W - pad}" y="14" text-anchor="end" font-size="12" fill="var(--muted)">${hi.toFixed(4)}</text>` +
+    `<text x="${W - pad}" y="${H - 12}" text-anchor="end" font-size="12" fill="var(--muted)">${lo.toFixed(4)}</text>`;
+}
+
+function render(s) {
+  state = s;
+  const usd = (v) => (s.solUsd ? "$" + (v * s.solUsd).toFixed(2) : "");
+  const live = s.mode === "live";
+  $("mode").textContent = live ? "LIVE · REAL MONEY" : "PAPER · FAKE MONEY";
+  $("mode").className = "badge " + (live ? "live" : "paper");
+
+  $("feedDot").className = "dot " + (s.feed.connected ? "ok" : "bad");
+  $("feedText").textContent = s.feed.connected ? `Feed live (${s.feed.lastMessageAgoSec ?? "–"}s ago)` : "Feed disconnected";
+  const rpcOk = s.tracker.lastPollAgoSec != null && s.tracker.lastPollAgoSec < 10;
+  $("rpcDot").className = "dot " + (rpcOk ? "ok" : "bad");
+  $("rpcText").textContent = `RPC ${s.tracker.lastPollMs}ms · ${s.tracker.rpcErrors} errors`;
+
+  const r = s.risk;
+  const riskBits = [];
+  if (r.paused) riskBits.push("Paused");
+  if (r.haltedForDay) riskBits.push("Daily loss limit hit");
+  if (r.cooldownSec > 0) riskBits.push(`Cooldown ${dur(r.cooldownSec)}`);
+  riskBits.push(`${r.tradesLastHour} trades/h`);
+  $("riskText").textContent = riskBits.join(" · ");
+  $("pauseBtn").textContent = r.paused ? "Resume" : "Pause";
+  const notice = $("notice");
+  if (r.haltedForDay) { notice.style.display = "block"; notice.textContent = "Daily loss limit reached. No new trades until tomorrow."; }
+  else notice.style.display = "none";
+
+  $("equity").textContent = sol(s.equitySol) + " SOL";
+  $("equityUsd").textContent = usd(s.equitySol) + (s.solUsd ? ` · SOL $${s.solUsd.toFixed(2)}` : "");
+  $("pnl").textContent = signed(s.pnlSol) + " SOL";
+  $("pnl").className = "value " + cls(s.pnlSol);
+  $("pnlSub").textContent = pctTxt(s.pnlPct) + (s.solUsd ? " · " + (s.pnlSol >= 0 ? "+" : "-") + "$" + Math.abs(s.pnlSol * s.solUsd).toFixed(2) : "") + ` · start ${sol(s.startSol)}`;
+  $("cash").textContent = sol(s.cashSol) + " SOL";
+  $("cashSub").textContent = `${s.positions.length} open · ${s.settings.tradeSizeSol} SOL/trade`;
+  const n = s.wins + s.losses;
+  $("winrate").textContent = n ? Math.round((s.wins / n) * 100) + "%" : "–";
+  $("wl").textContent = `${s.wins} wins / ${s.losses} losses`;
+  $("fees").textContent = sol(s.feesPaidSol) + " SOL";
+  $("feesSub").textContent = `${usd(s.feesPaidSol)} · ${s.failedTxCount} failed tx`;
+  $("watching").textContent = s.tracker.watching;
+  $("seen").textContent = `${s.feed.tokensSeen} launches seen`;
+
+  drawChart(s.equityHistory, s.startSol);
+
+  $("positions").innerHTML = s.positions.length
+    ? `<table><thead><tr><th>Coin</th><th class="num">Age</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Value now</th><th>Status</th></tr></thead><tbody>` +
+      s.positions.map((p) => `<tr>
+        <td><a href="https://pump.fun/coin/${encodeURIComponent(p.mint)}" target="_blank" rel="noopener noreferrer">${esc(p.symbol || p.mint.slice(0, 6))}</a> <span class="muted">${esc(p.name)}</span></td>
+        <td class="num">${dur(p.ageSec)}</td>
+        <td class="num ${cls(p.pricePct)}">${pctTxt(p.pricePct)}</td>
+        <td class="num">${sol(p.costSol)}</td>
+        <td class="num ${cls(p.valueSol - p.costSol)}">${sol(p.valueSol)}</td>
+        <td>${p.selling ? "Selling…" : "Holding"}</td></tr>`).join("") + `</tbody></table>`
+    : `<div class="empty">No open positions. The bot is watching new coins for a momentum signal.</div>`;
+
+  $("trades").innerHTML = s.recentTrades.length
+    ? `<table><thead><tr><th>Time</th><th>Coin</th><th>Exit</th><th class="num">Hold</th><th class="num">P&amp;L</th><th class="num">%</th></tr></thead><tbody>` +
+      s.recentTrades.map((t) => `<tr>
+        <td>${time(t.closedAt)}</td>
+        <td><a href="https://pump.fun/coin/${encodeURIComponent(t.mint)}" target="_blank" rel="noopener noreferrer">${esc(t.symbol || t.mint.slice(0, 6))}</a></td>
+        <td>${esc(t.reason.replace("_", " "))}</td>
+        <td class="num">${dur(t.holdSec)}</td>
+        <td class="num ${cls(t.pnlSol)}">${signed(t.pnlSol)}</td>
+        <td class="num ${cls(t.pnlPct)}">${pctTxt(t.pnlPct)}</td></tr>`).join("") + `</tbody></table>`
+    : `<div class="empty">No closed trades yet.</div>`;
+
+  const logEl = $("log");
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 30;
+  logEl.innerHTML = s.logs.map((l) => `<div class="${l.level}">${time(l.t)} ${esc(l.msg)}</div>`).join("");
+  if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+
+  const st = s.settings;
+  $("settings").textContent =
+    `Strategy: take profit +${st.takeProfitPct}% · stop loss -${st.stopLossPct}% · trailing stop ${st.trailDropPct}% after +${st.trailActivatePct}% · max hold ${st.maxHoldSec}s · max ${st.maxOpen} open · running since ${new Date(s.startedAt).toLocaleString()}`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/state", { cache: "no-store" });
+    render(await res.json());
+  } catch {
+    $("feedDot").className = "dot bad";
+    $("feedText").textContent = "Bot not reachable";
+  }
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
