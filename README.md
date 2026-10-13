@@ -44,6 +44,7 @@ Every number above can be changed in `.env` (see `.env.example`).
 | `npm run watch` | Watches new coins and shows which ones the strategy *would* buy. No trading. |
 | `npm run dev` | **Paper trading** with fake money, plus the dashboard at http://127.0.0.1:3000 |
 | `npm run report` | Summary of all paper trades: win rate, P&L, fees, drawdown, results by exit reason |
+| `npm run backtest` | Tests hundreds of setting combinations on recorded price data and shows the best ones |
 | `npm test` | Unit tests |
 | `npm run live:check` | Dry run of the live trade path. Builds and inspects a transaction but **never signs or sends** anything. |
 | `npm run wallet:new` | Creates a burner wallet for live trading and prints only its address |
@@ -52,6 +53,19 @@ Every number above can be changed in `.env` (see `.env.example`).
 
 Stop the bot with **Ctrl+C**. Its state is saved to `data/`, and open positions are picked up again on the next start.
 To restart paper trading from scratch, delete `data/paper-state.json` and `data/paper-trades.csv`.
+
+## Tuning with the backtester
+
+While the bot runs (`npm run dev` or `npm run watch`), it records the price path of every promising coin to `data/ticks/`. That includes coins it didn't buy, for 5 minutes after their watch window.
+
+1. Let the bot run for at least a day.
+2. Run `npm run backtest`. It replays the recording through the bot's real strategy, fee model and risk limits:
+   - Stage 1 tries 54 entry settings.
+   - Stage 2 tries 576 exit settings for the 3 best entries.
+3. It tunes on the first 70% of the recorded time, then checks the winners on the last 30% ("valid"). A setting that is good on *tune* but bad on *valid* was probably luck.
+4. Paste the suggested lines into `.env`, then confirm with a fresh paper run. To restart paper trading, move `data/paper-state.json` and `data/paper-trades.csv` into `data/archive/`.
+
+Trade size: `TRADE_SIZE_PCT=2` makes each trade 2% of the current balance, never more than `MAX_TRADE_SOL`. Set it to 0 to use the fixed `TRADE_SIZE_SOL` instead.
 
 ## Paper mode realism
 

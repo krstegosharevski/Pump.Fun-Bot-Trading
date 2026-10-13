@@ -178,14 +178,14 @@ function render(s) {
   $("pnl").className = "value " + cls(s.pnlSol);
   $("pnlSub").textContent = pctTxt(s.pnlPct) + (s.solUsd ? " · " + (s.pnlSol >= 0 ? "+" : "-") + "$" + Math.abs(s.pnlSol * s.solUsd).toFixed(2) : "") + ` · start ${sol(s.startSol)}`;
   $("cash").textContent = sol(s.cashSol) + " SOL";
-  $("cashSub").textContent = `${s.positions.length} open · ${s.settings.tradeSizeSol} SOL/trade`;
+  $("cashSub").textContent = `${s.positions.length} open · ${sol(s.settings.tradeSizeSol, 3)} SOL/trade`;
   const n = s.wins + s.losses;
   $("winrate").textContent = n ? Math.round((s.wins / n) * 100) + "%" : "–";
   $("wl").textContent = `${s.wins} wins / ${s.losses} losses`;
   $("fees").textContent = sol(s.feesPaidSol) + " SOL";
   $("feesSub").textContent = `${usd(s.feesPaidSol)} · ${s.failedTxCount} failed tx`;
   $("watching").textContent = s.tracker.watching;
-  $("seen").textContent = `${s.feed.tokensSeen} launches seen`;
+  $("seen").textContent = `${s.feed.tokensSeen} launches seen · ${s.tracker.shadow} recording`;
 
   drawChart(s.equityHistory, s.startSol);
 

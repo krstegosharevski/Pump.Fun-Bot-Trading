@@ -86,15 +86,16 @@ export class Portfolio {
     public startSol: number,
     public cashSol: number,
     public startedAt = Date.now(),
-    private dataDir = "data",
+    /** null = keep everything in memory (backtests). */
+    private dataDir: string | null = "data",
   ) {}
 
   get statePath() {
-    return path.join(this.dataDir, `${this.mode}-state.json`);
+    return path.join(this.dataDir ?? "", `${this.mode}-state.json`);
   }
 
   get tradesPath() {
-    return path.join(this.dataDir, `${this.mode}-trades.csv`);
+    return path.join(this.dataDir ?? "", `${this.mode}-trades.csv`);
   }
 
   static load(mode: "paper" | "live", dataDir = "data"): Portfolio | null {
@@ -115,6 +116,7 @@ export class Portfolio {
   }
 
   save(risk?: unknown) {
+    if (this.dataDir === null) return;
     fs.mkdirSync(this.dataDir, { recursive: true });
     const state: SavedState = {
       version: 1,
@@ -224,6 +226,7 @@ export class Portfolio {
   }
 
   private appendCsv(t: ClosedTrade) {
+    if (this.dataDir === null) return;
     fs.mkdirSync(this.dataDir, { recursive: true });
     if (!fs.existsSync(this.tradesPath)) fs.writeFileSync(this.tradesPath, CSV_HEADER + "\n");
     const row = [

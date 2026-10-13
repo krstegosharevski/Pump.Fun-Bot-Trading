@@ -4,6 +4,11 @@ import { z } from "zod";
 dotenv.config({ quiet: true });
 
 const num = (def: number) => z.coerce.number().default(def);
+const bool = (def: boolean) =>
+  z
+    .enum(["true", "false"])
+    .default(def ? "true" : "false")
+    .transform((v) => v === "true");
 
 const schema = z.object({
   // --- Mode & connections ---
@@ -17,10 +22,18 @@ const schema = z.object({
   POLL_MS: num(1000),
   MAX_WATCHLIST: num(80),
 
+  // --- Recording (data for the backtester) ---
+  RECORD_TICKS: bool(true),
+  SHADOW_SEC: num(300),
+  MAX_SHADOW: num(60),
+
   // --- Bankroll & sizing ---
   PAPER_START_USD: num(25),
   PAPER_START_SOL: num(0.15),
   TRADE_SIZE_SOL: num(0.02),
+  /** If > 0, each trade is this % of current equity instead of TRADE_SIZE_SOL. */
+  TRADE_SIZE_PCT: num(0),
+  MAX_TRADE_SOL: num(0.5),
   MAX_OPEN_POSITIONS: num(2),
   MIN_SOL_RESERVE: num(0.02),
 
@@ -40,10 +53,7 @@ const schema = z.object({
   // --- Momentum entry ---
   WATCH_WINDOW_SEC: num(45),
   MAX_DEV_BUY_PCT: num(10),
-  SKIP_MAYHEM: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((v) => v === "true"),
+  SKIP_MAYHEM: bool(true),
   MIN_MCAP_GAIN_PCT: num(25),
   MIN_REAL_SOL: num(3),
   MAX_CURVE_PROGRESS_PCT: num(50),
@@ -52,8 +62,8 @@ const schema = z.object({
   // --- Exits ---
   TAKE_PROFIT_PCT: num(40),
   STOP_LOSS_PCT: num(20),
-  TRAIL_ACTIVATE_PCT: num(20),
-  TRAIL_DROP_PCT: num(15),
+  TRAIL_ACTIVATE_PCT: num(25),
+  TRAIL_DROP_PCT: num(10),
   MAX_HOLD_SEC: num(180),
 
   // --- Risk guard ---

@@ -3,6 +3,7 @@ import { log } from "./log";
 import { makeConnection, redactUrl, SolPrice } from "./chain/rpc";
 import { PumpPortalFeed } from "./feed/pumpPortal";
 import { Tracker } from "./market/tracker";
+import { TickRecorder } from "./market/recorder";
 import { runWatchMode } from "./watch";
 
 async function main() {
@@ -15,7 +16,9 @@ async function main() {
   solPrice.startAutoRefresh();
   if (solPrice.usd) log.info(`SOL price: $${solPrice.usd.toFixed(2)}`);
 
-  const tracker = new Tracker(conn, cfg);
+  const recorder = cfg.RECORD_TICKS ? new TickRecorder() : undefined;
+  if (recorder) log.info("Recording price paths to data/ticks/ for the backtester");
+  const tracker = new Tracker(conn, cfg, recorder);
   const feed = new PumpPortalFeed(cfg.PUMPPORTAL_WS, cfg.PUMPPORTAL_API_KEY);
   feed.on("newToken", (e) => tracker.add(e));
   feed.on("migration", (mint) => tracker.markMigrated(mint));

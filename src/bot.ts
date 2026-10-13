@@ -3,8 +3,8 @@ import type { Config, RunMode } from "./config";
 import type { SolPrice } from "./chain/rpc";
 import type { PumpPortalFeed } from "./feed/pumpPortal";
 import type { TrackedCoin, Tracker } from "./market/tracker";
-import { Portfolio } from "./portfolio";
-import { RiskGuard } from "./risk";
+import { Portfolio, type Position } from "./portfolio";
+import { RiskGuard, tradeSizeSol } from "./risk";
 import { shouldEnter, shouldExit } from "./strategy/momentum";
 import { PaperExecutor } from "./exec/paper";
 import type { Executor } from "./exec/types";
@@ -21,6 +21,8 @@ export interface BotDeps {
 }
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
+const sizeLabel = (cfg: Config) =>
+  cfg.TRADE_SIZE_PCT > 0 ? `${cfg.TRADE_SIZE_PCT}% of equity (max ${cfg.MAX_TRADE_SOL} SOL)` : `${cfg.TRADE_SIZE_SOL} SOL`;
 const SELL_RETRY_MS = 3000;
 
 export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: BotDeps) {
@@ -45,9 +47,9 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
     log.warn("================ LIVE TRADING — REAL MONEY ================");
     log.warn(`Wallet ${wallet.publicKey.toBase58()}  balance ${balance.toFixed(4)} SOL`);
     log.warn(
-      `Trade size ${cfg.TRADE_SIZE_SOL} SOL | max open ${cfg.MAX_OPEN_POSITIONS} | reserve ${cfg.MIN_SOL_RESERVE} SOL | daily loss stop ${cfg.DAILY_LOSS_LIMIT_PCT}%`,
+      `Trade size ${sizeLabel(cfg)} | max open ${cfg.MAX_OPEN_POSITIONS} | reserve ${cfg.MIN_SOL_RESERVE} SOL | daily loss stop ${cfg.DAILY_LOSS_LIMIT_PCT}%`,
     );
-    if (balance < cfg.TRADE_SIZE_SOL + cfg.MIN_SOL_RESERVE) {
+    if (balance < tradeSizeSol(cfg, balance) + cfg.MIN_SOL_RESERVE) {
       throw new Error("Wallet balance is too low to trade. Send SOL to the wallet address above first.");
     }
     for (let s = 10; s > 0; s--) {
@@ -69,6 +71,9 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
 
   const pf = portfolio;
   const risk = new RiskGuard(cfg, pf.equitySol(exitFeePct), Date.now(), pf.savedRisk);
+  log.info(
+    `Trade size: ${sizeLabel(cfg)} ≈ ${tradeSizeSol(cfg, pf.equitySol(exitFeePct)).toFixed(4)} SOL now | max open ${cfg.MAX_OPEN_POSITIONS}`,
+  );
   for (const pos of pf.positions.values()) tracker.addHeld(pos.mint, pos.name, pos.symbol, pos.openedAt);
 
   const inFlight = new Set<string>();
@@ -81,15 +86,15 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
     }
   };
 
-  async function enter(coin: TrackedCoin, reason: string) {
+  async function enter(coin: TrackedCoin, reason: string, sizeSol: number) {
     const price = coin.history.at(-1)!.priceSol;
     inFlight.add(coin.mint);
     tracker.pin(coin.mint);
     tracker.markDone(coin.mint);
     risk.recordBuy(Date.now());
-    log.trade(`BUY  ${coin.symbol} for ${cfg.TRADE_SIZE_SOL} SOL — ${reason}  ${coin.mint}`);
+    log.trade(`BUY  ${coin.symbol} for ${sizeSol.toFixed(4)} SOL — ${reason}  ${coin.mint}`);
     try {
-      const fill = await executor.buy({ mint: coin.mint, solAmount: cfg.TRADE_SIZE_SOL, expectedPriceSol: price });
+      const fill = await executor.buy({ mint: coin.mint, solAmount: sizeSol, expectedPriceSol: price });
       if (fill.ok) {
         pf.open({ mint: coin.mint, symbol: coin.symbol, name: coin.name, entryReason: reason }, fill, Date.now());
         log.trade(
@@ -139,17 +144,25 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
     }
   }
 
+  function checkExit(pos: Position, now: number) {
+    const coin = tracker.get(pos.mint);
+    const last = coin?.history.at(-1);
+    if (last) pf.markPrice(pos.mint, last.priceSol);
+    if (inFlight.has(pos.mint)) return;
+    if (now - (lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) return;
+    const reason = shouldExit(pos, pos.lastPriceSol, coin?.complete ?? false, now, cfg);
+    if (reason) void exit(pos.mint, reason);
+  }
+
+  // Held coins stream price changes over the RPC websocket: react to each one immediately.
+  tracker.onHeldUpdate((coin, now) => {
+    const pos = pf.positions.get(coin.mint);
+    if (pos) checkExit(pos, now);
+  });
+
   tracker.onTick((coins, now) => {
-    // 1) Manage open positions.
-    for (const pos of pf.positions.values()) {
-      const coin = tracker.get(pos.mint);
-      const last = coin?.history.at(-1);
-      if (last) pf.markPrice(pos.mint, last.priceSol);
-      if (inFlight.has(pos.mint)) continue;
-      if (now - (lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) continue;
-      const reason = shouldExit(pos, pos.lastPriceSol, coin?.complete ?? false, now, cfg);
-      if (reason) void exit(pos.mint, reason);
-    }
+    // 1) Manage open positions (fallback when the websocket is quiet).
+    for (const pos of pf.positions.values()) checkExit(pos, now);
 
     // 2) Look for entries.
     for (const coin of coins) {
@@ -162,13 +175,18 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
       }
       if (!d.enter) continue;
       const pendingBuys = [...inFlight].filter((m) => !pf.positions.has(m)).length;
-      const ok = risk.canOpen(now, { openPositions: pf.positions.size + pendingBuys, cashSol: pf.cashSol });
+      const sizeSol = tradeSizeSol(cfg, pf.equitySol(exitFeePct));
+      const ok = risk.canOpen(now, {
+        openPositions: pf.positions.size + pendingBuys,
+        cashSol: pf.cashSol,
+        tradeSizeSol: sizeSol,
+      });
       if (!ok.ok) {
         log.info(`Signal on ${coin.symbol} skipped: ${ok.reason}`);
         tracker.markDone(coin.mint);
         continue;
       }
-      void enter(coin, d.reason);
+      void enter(coin, d.reason, sizeSol);
     }
 
     // 3) Equity tracking and the daily loss stop.
@@ -223,7 +241,7 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
       },
       tracker: tracker.stats(),
       settings: {
-        tradeSizeSol: cfg.TRADE_SIZE_SOL,
+        tradeSizeSol: tradeSizeSol(cfg, equity),
         maxOpen: cfg.MAX_OPEN_POSITIONS,
         takeProfitPct: cfg.TAKE_PROFIT_PCT,
         stopLossPct: cfg.STOP_LOSS_PCT,

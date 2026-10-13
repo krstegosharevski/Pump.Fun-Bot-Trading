@@ -9,6 +9,14 @@ export interface RiskState {
   tradeTimes: number[];
 }
 
+/** SOL to put into the next trade: a % of equity (capped) or the fixed size. */
+export function tradeSizeSol(cfg: Config, equitySol: number): number {
+  if (cfg.TRADE_SIZE_PCT > 0) {
+    return Math.min(cfg.MAX_TRADE_SOL, (equitySol * cfg.TRADE_SIZE_PCT) / 100);
+  }
+  return cfg.TRADE_SIZE_SOL;
+}
+
 const localDayKey = (t: number) => {
   const d = new Date(t);
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
@@ -43,15 +51,16 @@ export class RiskGuard {
 
   canOpen(
     now: number,
-    st: { openPositions: number; cashSol: number },
+    st: { openPositions: number; cashSol: number; tradeSizeSol?: number },
   ): { ok: true } | { ok: false; reason: string } {
     const cfg = this.cfg;
     if (this.paused) return { ok: false, reason: "paused" };
     if (this.s.haltedForDay) return { ok: false, reason: "daily loss limit hit" };
     if (now < this.s.cooldownUntil) return { ok: false, reason: "cooling down after losses" };
     if (st.openPositions >= cfg.MAX_OPEN_POSITIONS) return { ok: false, reason: "max open positions" };
+    const size = st.tradeSizeSol ?? cfg.TRADE_SIZE_SOL;
     const worstCaseCost =
-      cfg.TRADE_SIZE_SOL * (1 + cfg.BUY_SLIPPAGE_PCT / 100) * (1 + cfg.PUMPPORTAL_FEE_PCT / 100) +
+      size * (1 + cfg.BUY_SLIPPAGE_PCT / 100) * (1 + cfg.PUMPPORTAL_FEE_PCT / 100) +
       cfg.PRIORITY_FEE_SOL +
       cfg.BASE_FEE_SOL +
       cfg.ATA_RENT_SOL;

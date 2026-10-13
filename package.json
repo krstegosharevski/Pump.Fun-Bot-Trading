@@ -10,6 +10,7 @@
     "live": "tsx src/index.ts --live",
     "live:check": "tsx scripts/liveCheck.ts",
     "report": "tsx scripts/report.ts",
+    "backtest": "tsx scripts/backtest.ts",
     "wallet:new": "tsx scripts/newWallet.ts",
     "wallet:withdraw": "tsx scripts/withdraw.ts",
     "test": "vitest run",
