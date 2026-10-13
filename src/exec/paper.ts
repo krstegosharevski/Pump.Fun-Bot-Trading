@@ -1,5 +1,5 @@
 import type { Config } from "../config";
-import { quoteBuy, quoteSell, spotPriceSol, TOKEN_DECIMALS, type CurveState } from "../chain/curve";
+import { applyBuy, quoteBuy, quoteSell, spotPriceSol, TOKEN_DECIMALS, type CurveState } from "../chain/curve";
 import { sleep } from "../log";
 import { failedFill, type BuyRequest, type Executor, type Fill, type SellRequest } from "./types";
 
@@ -77,10 +77,14 @@ export class PaperExecutor implements Executor {
       // Liquidity has moved to PumpSwap; approximate with the final curve price.
       grossSol = tokens * spotPriceSol(curve) * (1 - GRADUATED_HAIRCUT_PCT / 100);
     } else {
-      grossSol = Number(quoteSell(curve, req.tokensRaw)) / LAMPORTS;
+      // Live, our buy would be in the curve. Without it, a coin everyone else has sold
+      // looks like it has no SOL left to pay us, so add our SOL back before quoting.
+      const withUs = req.solInCurve ? applyBuy(curve, toLamports(req.solInCurve)) : curve;
+      grossSol = Number(quoteSell(withUs, req.tokensRaw)) / LAMPORTS;
     }
     const priceSol = tokens > 0 ? grossSol / tokens : 0;
-    if (priceSol < req.expectedPriceSol * (1 - cfg.SELL_SLIPPAGE_PCT / 100)) {
+    const slippagePct = req.slippagePct ?? cfg.SELL_SLIPPAGE_PCT;
+    if (priceSol < req.expectedPriceSol * (1 - slippagePct / 100)) {
       return failedFill(
         `slippage: price moved ${((priceSol / req.expectedPriceSol - 1) * 100).toFixed(0)}%`,
         this.txCostSol,

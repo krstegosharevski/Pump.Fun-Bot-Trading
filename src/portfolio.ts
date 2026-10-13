@@ -19,6 +19,8 @@ export interface Position {
   peakPriceSol: number;
   lastPriceSol: number;
   entryReason: string;
+  /** Which bot opened it (positions saved before bots existed are Primal's). */
+  bot: string;
   buySig?: string;
 }
 
@@ -37,6 +39,7 @@ export interface ClosedTrade {
   feesSol: number;
   reason: string;
   entryReason: string;
+  bot: string;
   buySig?: string;
   sellSig?: string;
 }
@@ -65,8 +68,9 @@ interface SavedState {
   risk?: unknown;
 }
 
-export const CSV_HEADER =
+const CSV_HEADER_V1 =
   "closedAt,symbol,mint,reason,holdSec,entryPriceSol,exitPriceSol,costSol,proceedsSol,pnlSol,pnlPct,feesSol,entryReason,buySig,sellSig";
+export const CSV_HEADER = CSV_HEADER_V1 + ",bot";
 
 const clean = (s: string | undefined) => (s ?? "").replace(/[,"\r\n]/g, " ").trim();
 
@@ -80,6 +84,7 @@ export class Portfolio {
   wins = 0;
   losses = 0;
   savedRisk: unknown;
+  private csvChecked = false;
 
   constructor(
     public readonly mode: "paper" | "live",
@@ -111,7 +116,10 @@ export class Portfolio {
     p.recentTrades = s.recentTrades ?? [];
     p.equityHistory = s.equityHistory ?? [];
     p.savedRisk = s.risk;
-    for (const sp of s.positions) p.positions.set(sp.mint, { ...sp, tokensRaw: BigInt(sp.tokensRaw) });
+    for (const sp of s.positions) {
+      p.positions.set(sp.mint, { ...sp, bot: sp.bot ?? "primal", tokensRaw: BigInt(sp.tokensRaw) });
+    }
+    p.recentTrades = p.recentTrades.map((t) => ({ ...t, bot: t.bot ?? "primal" }));
     return p;
   }
 
@@ -139,7 +147,7 @@ export class Portfolio {
     fs.renameSync(tmp, this.statePath);
   }
 
-  open(meta: { mint: string; symbol: string; name: string; entryReason: string }, fill: Fill, now: number) {
+  open(meta: { mint: string; symbol: string; name: string; entryReason: string; bot: string }, fill: Fill, now: number) {
     this.cashSol += fill.solDelta;
     this.feesPaidSol += fill.feesSol;
     this.positions.set(meta.mint, {
@@ -180,6 +188,7 @@ export class Portfolio {
       feesSol: pos.buyFeesSol + fill.feesSol,
       reason,
       entryReason: pos.entryReason,
+      bot: pos.bot,
       buySig: pos.buySig,
       sellSig: fill.signature,
     };
@@ -225,10 +234,24 @@ export class Portfolio {
     if (this.equityHistory.length > 2880) this.equityHistory.shift();
   }
 
+  /** Trade logs written before bots existed get a `bot` column, with their rows marked Primal's. */
+  private ensureCsvHeader() {
+    if (this.csvChecked) return;
+    this.csvChecked = true;
+    if (!fs.existsSync(this.tradesPath)) {
+      fs.writeFileSync(this.tradesPath, CSV_HEADER + "\n");
+      return;
+    }
+    const lines = fs.readFileSync(this.tradesPath, "utf8").split(/\r?\n/).filter(Boolean);
+    if (lines[0] !== CSV_HEADER_V1) return;
+    const upgraded = [CSV_HEADER, ...lines.slice(1).map((l) => `${l},primal`)];
+    fs.writeFileSync(this.tradesPath, upgraded.join("\n") + "\n");
+  }
+
   private appendCsv(t: ClosedTrade) {
     if (this.dataDir === null) return;
     fs.mkdirSync(this.dataDir, { recursive: true });
-    if (!fs.existsSync(this.tradesPath)) fs.writeFileSync(this.tradesPath, CSV_HEADER + "\n");
+    this.ensureCsvHeader();
     const row = [
       new Date(t.closedAt).toISOString(),
       clean(t.symbol),
@@ -245,6 +268,7 @@ export class Portfolio {
       clean(t.entryReason),
       clean(t.buySig),
       clean(t.sellSig),
+      clean(t.bot),
     ];
     fs.appendFileSync(this.tradesPath, row.join(",") + "\n");
   }

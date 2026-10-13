@@ -150,7 +150,7 @@ export class LiveExecutor implements Executor {
         mint: req.mint,
         amount: "100%",
         denominatedInSol: "false",
-        slippage: cfg.SELL_SLIPPAGE_PCT,
+        slippage: req.slippagePct ?? cfg.SELL_SLIPPAGE_PCT,
       });
     } catch (err) {
       return failedFill(`PumpPortal: ${(err as Error).message}`);

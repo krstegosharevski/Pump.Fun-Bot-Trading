@@ -3,15 +3,16 @@ import type { Config, RunMode } from "./config";
 import type { SolPrice } from "./chain/rpc";
 import type { PumpPortalFeed } from "./feed/pumpPortal";
 import type { TrackedCoin, Tracker } from "./market/tracker";
+import { TOKEN_DECIMALS } from "./chain/curve";
 import { Portfolio, type Position } from "./portfolio";
 import { RiskGuard, tradeSizeSol } from "./risk";
-import { shouldEnter, shouldExit } from "./strategy/momentum";
+import { shouldExit } from "./strategy/momentum";
+import { shouldExitLaunch } from "./strategy/launch";
 import { PaperExecutor } from "./exec/paper";
 import type { Executor } from "./exec/types";
-import { startDashboard } from "./dashboard/server";
-import { log, recentLogs, sleep } from "./log";
+import { log, recentLogs } from "./log";
 
-export interface BotDeps {
+export interface TraderDeps {
   cfg: Config;
   runMode: RunMode;
   conn: Connection;
@@ -20,192 +21,246 @@ export interface BotDeps {
   feed: PumpPortalFeed;
 }
 
-const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
-const sizeLabel = (cfg: Config) =>
-  cfg.TRADE_SIZE_PCT > 0 ? `${cfg.TRADE_SIZE_PCT}% of equity (max ${cfg.MAX_TRADE_SOL} SOL)` : `${cfg.TRADE_SIZE_SOL} SOL`;
+export interface EnterOrder {
+  bot: string;
+  reason: string;
+  sizeSol: number;
+  /** Price when the bot decided; the fill's slippage is measured against it. */
+  expectedPriceSol: number;
+}
+
+export const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
 const SELL_RETRY_MS = 3000;
+/** After this many failed sales of one position, sell at any price so it can't get stuck. */
+const ANY_PRICE_AFTER_FAILURES = 2;
+const ANY_PRICE_SLIPPAGE_PCT = 95;
 
-export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: BotDeps) {
-  const mode = runMode === "live" ? "live" : "paper";
-  const exitFeePct = cfg.PUMP_FEE_PCT + cfg.PUMPPORTAL_FEE_PCT;
-  let portfolio = Portfolio.load(mode);
-  let executor: Executor;
-  let syncLiveBalance: (() => Promise<void>) | undefined;
+/**
+ * The always-on part of the bot: the shared account, buying and selling, exit checks
+ * for every open position (using the rules of the bot that opened it), and saving.
+ * Bots (Primal, Tabak) only decide when to buy; see src/bots/engines.ts.
+ */
+export class Trader {
+  readonly exitFeePct: number;
+  readonly risk: RiskGuard;
+  /** When the last coin was finished with: sold, or its buy failed. */
+  lastDoneAt = 0;
+  private inFlight = new Set<string>();
+  private lastSellAttempt = new Map<string, number>();
+  private sellFailures = new Map<string, number>();
+  private timers: NodeJS.Timeout[] = [];
 
-  if (mode === "live") {
-    const { LiveExecutor, loadWallet } = await import("./exec/live");
-    const wallet = loadWallet(cfg.WALLET_PATH);
-    const live = new LiveExecutor(cfg, conn, wallet);
-    executor = live;
-    const balance = await live.balanceSol();
-    if (!portfolio) portfolio = new Portfolio("live", balance, balance);
-    portfolio.cashSol = balance;
-    const p = portfolio;
-    syncLiveBalance = async () => {
-      p.cashSol = await live.balanceSol();
-    };
-    log.warn("================ LIVE TRADING — REAL MONEY ================");
-    log.warn(`Wallet ${wallet.publicKey.toBase58()}  balance ${balance.toFixed(4)} SOL`);
-    log.warn(
-      `Trade size ${sizeLabel(cfg)} | max open ${cfg.MAX_OPEN_POSITIONS} | reserve ${cfg.MIN_SOL_RESERVE} SOL | daily loss stop ${cfg.DAILY_LOSS_LIMIT_PCT}%`,
-    );
-    if (balance < tradeSizeSol(cfg, balance) + cfg.MIN_SOL_RESERVE) {
-      throw new Error("Wallet balance is too low to trade. Send SOL to the wallet address above first.");
+  private constructor(
+    private deps: TraderDeps,
+    readonly mode: "paper" | "live",
+    readonly pf: Portfolio,
+    private executor: Executor,
+    readonly liveBalanceSol?: () => Promise<number>,
+  ) {
+    this.exitFeePct = deps.cfg.PUMP_FEE_PCT + deps.cfg.PUMPPORTAL_FEE_PCT;
+    this.risk = new RiskGuard(deps.cfg, pf.equitySol(this.exitFeePct), Date.now(), pf.savedRisk);
+  }
+
+  static async create(deps: TraderDeps): Promise<Trader> {
+    const { cfg, conn, solPrice, tracker } = deps;
+    const mode = deps.runMode === "live" ? "live" : "paper";
+    let portfolio = Portfolio.load(mode);
+
+    if (mode === "live") {
+      const { LiveExecutor, loadWallet } = await import("./exec/live");
+      const wallet = loadWallet(cfg.WALLET_PATH);
+      const live = new LiveExecutor(cfg, conn, wallet);
+      const balance = await live.balanceSol();
+      if (!portfolio) portfolio = new Portfolio("live", balance, balance);
+      portfolio.cashSol = balance;
+      log.warn("================ LIVE MODE — REAL MONEY ================");
+      log.warn(`Wallet ${wallet.publicKey.toBase58()}  balance ${balance.toFixed(4)} SOL`);
+      return new Trader(deps, "live", portfolio, live, () => live.balanceSol());
     }
-    for (let s = 10; s > 0; s--) {
-      log.warn(`Starting live trading in ${s}s — press Ctrl+C to cancel`);
-      await sleep(1000);
-    }
-  } else {
-    executor = new PaperExecutor(cfg, (mint) => tracker.fetchFresh(mint));
+
     if (!portfolio) {
       const startSol = solPrice.usd ? cfg.PAPER_START_USD / solPrice.usd : cfg.PAPER_START_SOL;
       portfolio = new Portfolio("paper", startSol, startSol);
       log.info(`New paper account: ${startSol.toFixed(4)} SOL (≈ $${cfg.PAPER_START_USD} of fake money)`);
     } else {
       log.info(
-        `Resumed paper account: cash ${portfolio.cashSol.toFixed(4)} SOL, ${portfolio.positions.size} open position(s). Delete data/paper-state.json to start over.`,
+        `Paper account: cash ${portfolio.cashSol.toFixed(4)} SOL, ${portfolio.positions.size} open position(s). Delete data/paper-state.json to start over.`,
       );
     }
+    return new Trader(deps, "paper", portfolio, new PaperExecutor(cfg, (mint) => tracker.fetchFresh(mint)));
   }
 
-  const pf = portfolio;
-  const risk = new RiskGuard(cfg, pf.equitySol(exitFeePct), Date.now(), pf.savedRisk);
-  log.info(
-    `Trade size: ${sizeLabel(cfg)} ≈ ${tradeSizeSol(cfg, pf.equitySol(exitFeePct)).toFixed(4)} SOL now | max open ${cfg.MAX_OPEN_POSITIONS}`,
-  );
-  for (const pos of pf.positions.values()) tracker.addHeld(pos.mint, pos.name, pos.symbol, pos.openedAt);
+  /** Starts exit management, equity tracking and periodic saving. Runs whether or not a bot is active. */
+  start() {
+    const { tracker } = this.deps;
+    for (const pos of this.pf.positions.values()) tracker.addHeld(pos.mint, pos.name, pos.symbol, pos.openedAt);
 
-  const inFlight = new Set<string>();
-  const lastSellAttempt = new Map<string, number>();
-  const persist = () => {
-    try {
-      pf.save(risk.toJSON());
-    } catch (err) {
-      log.error(`Could not save state: ${(err as Error).message}`);
-    }
-  };
+    // Held coins stream price changes over the RPC websocket: react to each one immediately.
+    tracker.onHeldUpdate((coin, now) => {
+      const pos = this.pf.positions.get(coin.mint);
+      if (pos) this.checkExit(pos, now);
+    });
+    tracker.onTick((_coins, now) => {
+      for (const pos of this.pf.positions.values()) this.checkExit(pos, now);
+      const equity = this.equitySol();
+      if (this.risk.updateEquity(equity, now)) {
+        log.error(`Daily loss limit (${this.deps.cfg.DAILY_LOSS_LIMIT_PCT}%) reached — no new trades until tomorrow.`);
+      }
+      this.pf.sampleEquity(now, this.exitFeePct);
+    });
+    this.timers.push(setInterval(() => this.persist(), 15_000));
+  }
 
-  async function enter(coin: TrackedCoin, reason: string, sizeSol: number) {
-    const price = coin.history.at(-1)!.priceSol;
-    inFlight.add(coin.mint);
+  equitySol(): number {
+    return this.pf.equitySol(this.exitFeePct);
+  }
+
+  sizeFor(cfg: Config): number {
+    return tradeSizeSol(cfg, this.equitySol());
+  }
+
+  pendingBuys(): number {
+    return [...this.inFlight].filter((m) => !this.pf.positions.has(m)).length;
+  }
+
+  isInFlight(mint: string): boolean {
+    return this.inFlight.has(mint);
+  }
+
+  /** Nothing open and nothing being bought or sold. */
+  isIdle(): boolean {
+    return this.pf.positions.size === 0 && this.inFlight.size === 0;
+  }
+
+  async enter(coin: TrackedCoin, order: EnterOrder) {
+    const { tracker } = this.deps;
+    const pf = this.pf;
+    const price = order.expectedPriceSol;
+    this.inFlight.add(coin.mint);
     tracker.pin(coin.mint);
     tracker.markDone(coin.mint);
-    risk.recordBuy(Date.now());
-    log.trade(`BUY  ${coin.symbol} for ${sizeSol.toFixed(4)} SOL — ${reason}  ${coin.mint}`);
+    this.risk.recordBuy(Date.now());
+    log.trade(`BUY  ${coin.symbol} for ${order.sizeSol.toFixed(4)} SOL — ${order.reason}  ${coin.mint}`);
     try {
-      const fill = await executor.buy({ mint: coin.mint, solAmount: sizeSol, expectedPriceSol: price });
+      const fill = await this.executor.buy({ mint: coin.mint, solAmount: order.sizeSol, expectedPriceSol: price });
       if (fill.ok) {
-        pf.open({ mint: coin.mint, symbol: coin.symbol, name: coin.name, entryReason: reason }, fill, Date.now());
+        pf.open(
+          { mint: coin.mint, symbol: coin.symbol, name: coin.name, entryReason: order.reason, bot: order.bot },
+          fill,
+          Date.now(),
+        );
         log.trade(
           `  bought ${coin.symbol}: paid ${(-fill.solDelta).toFixed(4)} SOL incl. fees, fill ${pct((fill.priceSol / price - 1) * 100)} vs signal price`,
         );
       } else {
         pf.recordFailedTx(fill);
         tracker.release(coin.mint);
+        this.lastDoneAt = Date.now();
         log.warn(`  buy ${coin.symbol} failed: ${fill.error}`);
       }
     } catch (err) {
       tracker.release(coin.mint);
+      this.lastDoneAt = Date.now();
       log.error(`  buy ${coin.symbol} error: ${(err as Error).message}`);
     } finally {
-      inFlight.delete(coin.mint);
-      await syncLiveBalance?.().catch(() => {});
-      persist();
+      this.inFlight.delete(coin.mint);
+      await this.syncLiveBalance();
+      this.persist();
     }
   }
 
-  async function exit(mint: string, reason: string) {
+  async exit(mint: string, reason: string) {
+    const pf = this.pf;
     const pos = pf.positions.get(mint);
-    if (!pos || inFlight.has(mint)) return;
-    inFlight.add(mint);
-    lastSellAttempt.set(mint, Date.now());
-    log.trade(`SELL ${pos.symbol} — ${reason} (${pct((pos.lastPriceSol / pos.entryPriceSol - 1) * 100)} on price)`);
+    if (!pos || this.inFlight.has(mint)) return;
+    this.inFlight.add(mint);
+    this.lastSellAttempt.set(mint, Date.now());
+    const failures = this.sellFailures.get(mint) ?? 0;
+    const anyPrice = failures >= ANY_PRICE_AFTER_FAILURES;
+    log.trade(
+      `SELL ${pos.symbol} — ${reason} (${pct((pos.lastPriceSol / pos.entryPriceSol - 1) * 100)} on price)${anyPrice ? `, attempt ${failures + 1}: at any price` : ""}`,
+    );
     try {
-      const fill = await executor.sell({ mint, tokensRaw: pos.tokensRaw, expectedPriceSol: pos.lastPriceSol });
+      const fill = await this.executor.sell({
+        mint,
+        tokensRaw: pos.tokensRaw,
+        expectedPriceSol: pos.lastPriceSol,
+        solInCurve: (pos.entryPriceSol * Number(pos.tokensRaw)) / 10 ** TOKEN_DECIMALS,
+        slippagePct: anyPrice ? ANY_PRICE_SLIPPAGE_PCT : undefined,
+      });
       if (fill.ok) {
+        this.sellFailures.delete(mint);
         const t = pf.close(mint, fill, reason, Date.now())!;
-        risk.recordClose(t.pnlSol, Date.now());
-        tracker.release(mint);
-        lastSellAttempt.delete(mint);
+        this.risk.recordClose(t.pnlSol, Date.now());
+        this.deps.tracker.release(mint);
+        this.lastSellAttempt.delete(mint);
+        this.lastDoneAt = Date.now();
         log.trade(
           `  closed ${t.symbol}: ${t.pnlSol >= 0 ? "+" : ""}${t.pnlSol.toFixed(4)} SOL (${pct(t.pnlPct)}) after ${t.holdSec}s, fees ${t.feesSol.toFixed(4)} SOL`,
         );
       } else {
+        this.sellFailures.set(mint, failures + 1);
         pf.recordFailedTx(fill);
         log.warn(`  sell ${pos.symbol} failed: ${fill.error} — will retry`);
       }
     } catch (err) {
+      this.sellFailures.set(mint, failures + 1);
       log.error(`  sell ${pos.symbol} error: ${(err as Error).message} — will retry`);
     } finally {
-      inFlight.delete(mint);
-      await syncLiveBalance?.().catch(() => {});
-      persist();
+      this.inFlight.delete(mint);
+      await this.syncLiveBalance();
+      this.persist();
     }
   }
 
-  function checkExit(pos: Position, now: number) {
-    const coin = tracker.get(pos.mint);
+  /** Each position is sold by the rules of the bot that opened it. */
+  private checkExit(pos: Position, now: number) {
+    const coin = this.deps.tracker.get(pos.mint);
     const last = coin?.history.at(-1);
-    if (last) pf.markPrice(pos.mint, last.priceSol);
-    if (inFlight.has(pos.mint)) return;
-    if (now - (lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) return;
-    const reason = shouldExit(pos, pos.lastPriceSol, coin?.complete ?? false, now, cfg);
-    if (reason) void exit(pos.mint, reason);
+    if (last) this.pf.markPrice(pos.mint, last.priceSol);
+    if (this.inFlight.has(pos.mint)) return;
+    if (now - (this.lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) return;
+    const complete = coin?.complete ?? false;
+    const reason =
+      pos.bot === "tabak"
+        ? shouldExitLaunch(pos, pos.lastPriceSol, complete, now, this.deps.cfg)
+        : shouldExit(pos, pos.lastPriceSol, complete, now, this.deps.cfg);
+    if (reason) void this.exit(pos.mint, reason);
   }
 
-  // Held coins stream price changes over the RPC websocket: react to each one immediately.
-  tracker.onHeldUpdate((coin, now) => {
-    const pos = pf.positions.get(coin.mint);
-    if (pos) checkExit(pos, now);
-  });
+  closeAll(reason = "manual") {
+    for (const mint of [...this.pf.positions.keys()]) void this.exit(mint, reason);
+  }
 
-  tracker.onTick((coins, now) => {
-    // 1) Manage open positions (fallback when the websocket is quiet).
-    for (const pos of pf.positions.values()) checkExit(pos, now);
-
-    // 2) Look for entries.
-    for (const coin of coins) {
-      if (coin.held || coin.done || inFlight.has(coin.mint) || pf.positions.has(coin.mint)) continue;
-      const d = shouldEnter(coin, now, cfg);
-      coin.lastDecision = d.reason;
-      if (d.final) {
-        tracker.markDone(coin.mint);
-        continue;
-      }
-      if (!d.enter) continue;
-      const pendingBuys = [...inFlight].filter((m) => !pf.positions.has(m)).length;
-      const sizeSol = tradeSizeSol(cfg, pf.equitySol(exitFeePct));
-      const ok = risk.canOpen(now, {
-        openPositions: pf.positions.size + pendingBuys,
-        cashSol: pf.cashSol,
-        tradeSizeSol: sizeSol,
-      });
-      if (!ok.ok) {
-        log.info(`Signal on ${coin.symbol} skipped: ${ok.reason}`);
-        tracker.markDone(coin.mint);
-        continue;
-      }
-      void enter(coin, d.reason, sizeSol);
+  persist() {
+    try {
+      this.pf.save(this.risk.toJSON());
+    } catch (err) {
+      log.error(`Could not save state: ${(err as Error).message}`);
     }
+  }
 
-    // 3) Equity tracking and the daily loss stop.
-    const equity = pf.equitySol(exitFeePct);
-    if (risk.updateEquity(equity, now)) {
-      log.error(`Daily loss limit (${cfg.DAILY_LOSS_LIMIT_PCT}%) reached — no new trades until tomorrow.`);
+  shutdown() {
+    for (const t of this.timers) clearInterval(t);
+    this.persist();
+  }
+
+  private async syncLiveBalance() {
+    if (!this.liveBalanceSol) return;
+    try {
+      this.pf.cashSol = await this.liveBalanceSol();
+    } catch {
+      // keep the last known balance
     }
-    pf.sampleEquity(now, exitFeePct);
-  });
+  }
 
-  const closeAll = () => {
-    for (const mint of [...pf.positions.keys()]) void exit(mint, "manual");
-  };
-
-  const snapshot = () => {
+  snapshot(cfg: Config) {
+    const { solPrice, feed, tracker } = this.deps;
+    const pf = this.pf;
     const now = Date.now();
-    const equity = pf.equitySol(exitFeePct);
+    const equity = this.equitySol();
     return {
-      mode,
+      mode: this.mode,
       now,
       startedAt: pf.startedAt,
       solUsd: solPrice.usd,
@@ -223,79 +278,26 @@ export async function runBot({ cfg, runMode, conn, solPrice, tracker, feed }: Bo
         mint: p.mint,
         symbol: p.symbol,
         name: p.name,
+        bot: p.bot,
         ageSec: Math.round((now - p.openedAt) / 1000),
         entryPriceSol: p.entryPriceSol,
         lastPriceSol: p.lastPriceSol,
         pricePct: (p.lastPriceSol / p.entryPriceSol - 1) * 100,
         costSol: p.costSol,
-        valueSol: pf.positionValueSol(p, exitFeePct),
-        selling: inFlight.has(p.mint),
+        valueSol: pf.positionValueSol(p, this.exitFeePct),
+        selling: this.inFlight.has(p.mint),
       })),
       recentTrades: pf.recentTrades.slice(0, 30),
       equityHistory: [...pf.equityHistory, { t: now, equitySol: equity }],
-      risk: risk.snapshot(now),
+      risk: this.risk.snapshot(now),
       feed: {
         connected: feed.connected,
         lastMessageAgoSec: feed.lastMessageAt ? Math.round((now - feed.lastMessageAt) / 1000) : null,
         tokensSeen: feed.tokensSeen,
       },
       tracker: tracker.stats(),
-      settings: {
-        tradeSizeSol: tradeSizeSol(cfg, equity),
-        maxOpen: cfg.MAX_OPEN_POSITIONS,
-        takeProfitPct: cfg.TAKE_PROFIT_PCT,
-        stopLossPct: cfg.STOP_LOSS_PCT,
-        trailActivatePct: cfg.TRAIL_ACTIVATE_PCT,
-        trailDropPct: cfg.TRAIL_DROP_PCT,
-        maxHoldSec: cfg.MAX_HOLD_SEC,
-      },
+      settings: { tradeSizeSol: tradeSizeSol(cfg, equity), maxOpen: cfg.MAX_OPEN_POSITIONS },
       logs: recentLogs.slice(-40),
     };
-  };
-
-  const server = startDashboard(cfg.DASHBOARD_PORT, snapshot, {
-    pause: () => {
-      risk.paused = true;
-      log.warn("Paused from dashboard: no new entries (open positions are still managed)");
-    },
-    resume: () => {
-      risk.paused = false;
-      log.info("Resumed from dashboard");
-    },
-    closeAll: () => {
-      risk.paused = true;
-      log.warn("Close-all from dashboard: pausing and selling every open position");
-      closeAll();
-    },
-  });
-
-  const saveTimer = setInterval(persist, 15_000);
-  const summaryTimer = setInterval(() => {
-    const s = snapshot();
-    const usd = s.solUsd ? ` ($${(s.equitySol * s.solUsd).toFixed(2)})` : "";
-    log.info(
-      `${mode.toUpperCase()} | equity ${s.equitySol.toFixed(4)} SOL${usd} ${pct(s.pnlPct)} | cash ${s.cashSol.toFixed(4)} | open ${s.positions.length} | W/L ${s.wins}/${s.losses} | watching ${s.tracker.watching}`,
-    );
-  }, 60_000);
-
-  let shuttingDown = false;
-  const shutdown = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(saveTimer);
-    clearInterval(summaryTimer);
-    tracker.stop();
-    feed.stop();
-    persist();
-    server.close();
-    if (pf.positions.size > 0) {
-      log.warn(
-        `Stopped with ${pf.positions.size} open position(s). They are saved and will be managed again on the next start.`,
-      );
-    }
-    log.info("Bye.");
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  }
 }

@@ -217,7 +217,12 @@ export async function runBacktest(tl: Timeline, cfg: Config, opts: BacktestOptio
       lastSellAttempt.set(mint, t);
       fillCoin = s;
       fillAt = t + cfg.SIM_LATENCY_MS;
-      const fill = await exec.sell({ mint, tokensRaw: pos.tokensRaw, expectedPriceSol: pos.lastPriceSol });
+      const fill = await exec.sell({
+        mint,
+        tokensRaw: pos.tokensRaw,
+        expectedPriceSol: pos.lastPriceSol,
+        solInCurve: (pos.entryPriceSol * Number(pos.tokensRaw)) / 1e6,
+      });
       if (fill.ok) {
         const tr = pf.close(mint, fill, reason, t)!;
         trades.push(tr);
@@ -253,7 +258,7 @@ export async function runBacktest(tl: Timeline, cfg: Config, opts: BacktestOptio
     fillAt = t + cfg.SIM_LATENCY_MS;
     const fill = await exec.buy({ mint, solAmount: size, expectedPriceSol: p.priceSol });
     if (fill.ok) {
-      pf.open({ mint, symbol: s.meta.symbol, name: s.meta.symbol, entryReason: d.reason }, fill, t);
+      pf.open({ mint, symbol: s.meta.symbol, name: s.meta.symbol, entryReason: d.reason, bot: "primal" }, fill, t);
       coinOf.set(mint, ci);
     } else {
       pf.recordFailedTx(fill);

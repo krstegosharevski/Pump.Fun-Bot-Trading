@@ -72,6 +72,16 @@ describe("risk guard", () => {
     expect(risk.canOpen(T0 + 2000, { openPositions: 0, cashSol: 0.2 }).ok).toBe(false);
   });
 
+  it("hourly trade limit can be reset from the dashboard", () => {
+    const risk = new RiskGuard(cfg, 0.2, T0);
+    const st = { openPositions: 0, cashSol: 0.2 };
+    for (let i = 0; i < cfg.MAX_TRADES_PER_HOUR; i++) risk.recordBuy(T0);
+    expect(risk.canOpen(T0 + 1000, st)).toMatchObject({ ok: false, reason: "hourly trade limit" });
+    risk.resetHourlyLimit();
+    expect(risk.canOpen(T0 + 1000, st).ok).toBe(true);
+    expect(risk.snapshot(T0 + 1000)).toMatchObject({ tradesLastHour: 0, maxTradesPerHour: cfg.MAX_TRADES_PER_HOUR });
+  });
+
   it("enforces max positions and the SOL reserve", () => {
     const risk = new RiskGuard(cfg, 0.2, T0);
     expect(risk.canOpen(T0, { openPositions: cfg.MAX_OPEN_POSITIONS, cashSol: 1 }).ok).toBe(false);

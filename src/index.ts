@@ -5,9 +5,14 @@ import { PumpPortalFeed } from "./feed/pumpPortal";
 import { Tracker } from "./market/tracker";
 import { TickRecorder } from "./market/recorder";
 import { runWatchMode } from "./watch";
+import { BOTS, isBotId } from "./bots/registry";
 
 async function main() {
   const { cfg, runMode } = loadConfig();
+  const botArg = process.argv.includes("--bot") ? process.argv[process.argv.indexOf("--bot") + 1] : undefined;
+  if (botArg !== undefined && !isBotId(botArg)) {
+    throw new Error(`Unknown bot "${botArg}". Choose one of: ${BOTS.map((b) => b.id).join(", ")}`);
+  }
   log.info(`Starting in ${runMode.toUpperCase()} mode | RPC ${redactUrl(cfg.RPC_URL)}`);
 
   const conn = makeConnection(cfg.RPC_URL);
@@ -26,8 +31,8 @@ async function main() {
   if (runMode === "watch") {
     runWatchMode(cfg, feed, tracker);
   } else {
-    const { runBot } = await import("./bot");
-    await runBot({ cfg, runMode, conn, solPrice, tracker, feed });
+    const { startApp } = await import("./app");
+    await startApp({ cfg, runMode, conn, solPrice, tracker, feed }, botArg);
   }
 
   feed.start();

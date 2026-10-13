@@ -173,13 +173,20 @@ export class Tracker {
     return this.coins.get(mint);
   }
 
-  onTick(fn: TickListener) {
+  /** Returns a function that removes the listener. */
+  onTick(fn: TickListener): () => void {
     this.listeners.push(fn);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== fn);
+    };
   }
 
-  /** Called on every real-time price change of a held coin. */
-  onHeldUpdate(fn: HeldListener) {
+  /** Called on every real-time price change of a held coin. Returns a function that removes the listener. */
+  onHeldUpdate(fn: HeldListener): () => void {
     this.heldListeners.push(fn);
+    return () => {
+      this.heldListeners = this.heldListeners.filter((l) => l !== fn);
+    };
   }
 
   start() {

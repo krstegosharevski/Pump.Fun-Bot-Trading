@@ -8,14 +8,23 @@
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #6b7280; --border: #e3e6eb;
     --pos: #0f9d58; --neg: #d93025; --accent: #3b5bdb; --paper: #3b5bdb; --live: #d93025;
-    --chart: #3b5bdb; --chart-fill: rgba(59, 91, 219, 0.10); --row: #fafbfc;
+    --chart: #3b5bdb; --chart-fill: rgba(59, 91, 219, 0.10); --row: #fafbfc; --hover: #f1f3f7;
+    --on-accent: #ffffff; --warn: #c77c00;
   }
+  /* Dark colors: follow the system unless the theme button picked one. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #0f1115; --panel: #171a21; --text: #e7e9ee; --muted: #8b93a3; --border: #262b35;
       --pos: #34c77b; --neg: #ff6b5e; --accent: #7c96ff; --paper: #7c96ff; --live: #ff6b5e;
-      --chart: #7c96ff; --chart-fill: rgba(124, 150, 255, 0.12); --row: #1b1f27;
+      --chart: #7c96ff; --chart-fill: rgba(124, 150, 255, 0.12); --row: #1b1f27; --hover: #20242d;
+      --on-accent: #0f1115; --warn: #f0a63a;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --text: #e7e9ee; --muted: #8b93a3; --border: #262b35;
+    --pos: #34c77b; --neg: #ff6b5e; --accent: #7c96ff; --paper: #7c96ff; --live: #ff6b5e;
+    --chart: #7c96ff; --chart-fill: rgba(124, 150, 255, 0.12); --row: #1b1f27; --hover: #20242d;
+    --on-accent: #0f1115; --warn: #f0a63a;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -26,15 +35,21 @@
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
   .badge { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; color: #fff; }
   .badge.paper { background: var(--paper); } .badge.live { background: var(--live); }
+  .chip { font-size: 13px; font-weight: 600; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--panel); display: inline-flex; align-items: center; gap: 7px; }
   .pill { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.ok { background: var(--pos); } .dot.bad { background: var(--neg); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--pos); } .dot.bad { background: var(--neg); } .dot.warn { background: var(--warn); }
   .spacer { flex: 1; }
   button { font: inherit; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text);
     padding: 7px 14px; border-radius: 8px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
   button.danger { color: var(--neg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); padding: 9px 18px; }
+  button.primary:hover { filter: brightness(1.08); }
   .notice { display: none; margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--neg); color: var(--neg); background: var(--panel); }
+  .notice.info { border-color: var(--accent); color: var(--accent); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
   .kpi .label { font-size: 12px; color: var(--muted); }
@@ -54,25 +69,76 @@
   a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
   .empty { color: var(--muted); padding: 10px 2px; }
   .log { font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
-  .log .warn { color: #c77c00; } .log .error { color: var(--neg); } .log .trade { color: var(--pos); }
+  .log .warn { color: var(--warn); } .log .error { color: var(--neg); } .log .trade { color: var(--pos); }
   .muted { color: var(--muted); }
   footer { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  /* Bot picker */
+  .picker { padding: 18px 20px; }
+  .picker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .select { position: relative; }
+  .select-btn { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; padding: 9px 14px; min-width: 220px; justify-content: space-between; }
+  .chev { color: var(--muted); font-size: 12px; }
+  .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 10; width: min(380px, calc(100vw - 32px));
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); }
+  .opt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; border-radius: 8px;
+    padding: 10px 12px; background: transparent; font-weight: 400; }
+  .opt:hover, .opt:focus-visible { background: var(--hover); outline: none; }
+  .opt-main { flex: 1; min-width: 0; }
+  .opt-name { font-weight: 700; font-size: 15px; }
+  .opt-desc { color: var(--muted); font-size: 13px; }
+  .check { color: var(--accent); font-weight: 700; visibility: hidden; }
+  .opt[aria-selected="true"] .check { visibility: visible; }
+  .bot-desc { margin: 14px 0 10px; max-width: 760px; }
+  .rules { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; }
+  .rules dt { color: var(--muted); font-size: 13px; }
+  .rules dd { margin: 0; font-size: 13px; }
+  .acct { font-size: 13px; color: var(--muted); margin: 0; }
+  .err { color: var(--neg); font-size: 13px; }
+  button.small { font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+  .limit-hit { color: var(--warn); font-weight: 600; }
 </style>
+<script>
+  // Apply the saved theme before the page paints, so it never flashes the wrong colors.
+  try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 </head>
 <body>
 <main>
   <header>
     <h1>PumpFun Bot</h1>
     <span id="mode" class="badge paper">PAPER</span>
+    <span id="botChip" class="chip"><span id="botDot" class="dot"></span><span id="botText">No bot running</span></span>
     <span class="pill"><span id="feedDot" class="dot"></span><span id="feedText">Feed</span></span>
     <span class="pill"><span id="rpcDot" class="dot"></span><span id="rpcText">RPC</span></span>
     <span class="pill" id="riskText"></span>
+    <span class="pill"><span id="hourText"></span><button id="resetHourBtn" class="small" title="Forget this hour's trades so the bot can buy again now">Reset</button></span>
     <span class="spacer"></span>
-    <button id="pauseBtn">Pause</button>
+    <button id="themeBtn" title="Switch between light and dark">Light theme</button>
+    <button id="pauseBtn" hidden>Pause</button>
     <button id="closeBtn" class="danger">Close all</button>
+    <button id="stopBtn" class="danger" hidden>Stop bot</button>
   </header>
 
   <div id="notice" class="notice"></div>
+
+  <section id="picker" class="card section picker" hidden>
+    <h2>Choose a bot</h2>
+    <div class="picker-row">
+      <div class="select">
+        <button id="selBtn" class="select-btn" aria-haspopup="listbox" aria-expanded="false">
+          <span id="selName">Primal 1-1</span><span class="chev">▾</span>
+        </button>
+        <div id="selMenu" class="menu" role="listbox" hidden></div>
+      </div>
+      <button id="startBtn" class="primary">Start</button>
+      <span id="startErr" class="err"></span>
+    </div>
+    <p id="selDesc" class="bot-desc"></p>
+    <dl id="selRules" class="rules"></dl>
+    <p class="acct">Both bots trade from the same account: <span id="acct"></span></p>
+  </section>
 
   <div class="grid">
     <div class="card kpi"><div class="label">Equity</div><div class="value" id="equity">–</div><div class="sub" id="equityUsd"></div></div>
@@ -117,15 +183,96 @@ const cls = (x) => (x > 0 ? "pos" : x < 0 ? "neg" : "");
 const dur = (s) => (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s");
 const time = (t) => new Date(t).toLocaleTimeString();
 let state = null;
+let selected = "primal";
+try { selected = localStorage.getItem("selectedBot") || "primal"; } catch {}
+let menuBuilt = false;
 
-async function act(path) {
-  await fetch(path, { method: "POST", headers: { "X-Bot-Action": "1" } });
-  refresh();
+const bots = () => (state ? state.app.bots : []);
+const botById = (id) => bots().find((b) => b.id === id);
+const botShort = (id) => (botById(id)?.name || id || "").replace(/ \d+-\d+$/, "");
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "X-Bot-Action": "1", "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json().catch(() => ({ ok: res.ok }));
 }
+async function act(path) { await post(path); refresh(); }
+
+// Theme: the button shows the theme you'd switch to. The choice is remembered.
+const darkNow = () => {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+};
+const paintThemeBtn = () => { $("themeBtn").textContent = darkNow() ? "Light theme" : "Dark theme"; };
+$("themeBtn").onclick = () => {
+  const next = darkNow() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch {}
+  paintThemeBtn();
+};
+paintThemeBtn();
+
+$("resetHourBtn").onclick = () => act("/api/reset-hourly");
 $("pauseBtn").onclick = () => act(state?.risk.paused ? "/api/resume" : "/api/pause");
 $("closeBtn").onclick = () => {
-  if (confirm("Sell every open position now and pause new entries?")) act("/api/close-all");
+  if (confirm("Sell every open position now and pause new buys?")) act("/api/close-all");
 };
+$("stopBtn").onclick = () => {
+  const name = botById(state?.app.activeBot)?.name || "the bot";
+  const open = state?.positions.length || 0;
+  if (confirm(`Stop ${name}?${open ? ` Its ${open} open trade(s) will be sold first.` : ""}`)) act("/api/stop");
+};
+$("startBtn").onclick = async () => {
+  const bot = botById(selected);
+  if (!bot) return;
+  if (state.mode === "live" && !confirm(`Start ${bot.name} with REAL money?`)) return;
+  $("startErr").textContent = "";
+  const r = await post("/api/start", { bot: bot.id });
+  if (!r.ok) $("startErr").textContent = r.error || "Could not start";
+  refresh();
+};
+
+// Claude-style picker: a button that opens a list of bots.
+const menu = $("selMenu");
+function setMenu(open) {
+  menu.hidden = !open;
+  $("selBtn").setAttribute("aria-expanded", String(open));
+  if (open) menu.querySelector('[aria-selected="true"]')?.focus();
+}
+$("selBtn").onclick = (e) => { e.stopPropagation(); setMenu(menu.hidden); };
+document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target)) setMenu(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+
+function buildMenu() {
+  menu.innerHTML = bots().map((b) => `
+    <button class="opt" role="option" data-id="${esc(b.id)}" aria-selected="false">
+      <span class="opt-main"><span class="opt-name">${esc(b.name)}</span><br><span class="opt-desc">${esc(b.tagline)}</span></span>
+      <span class="check">✓</span>
+    </button>`).join("");
+  menu.querySelectorAll(".opt").forEach((el) => {
+    el.onclick = () => {
+      selected = el.dataset.id;
+      try { localStorage.setItem("selectedBot", selected); } catch {}
+      setMenu(false);
+      renderPicker();
+    };
+  });
+  menuBuilt = true;
+}
+
+function renderPicker() {
+  if (!botById(selected)) selected = bots()[0]?.id;
+  const bot = botById(selected);
+  if (!bot) return;
+  $("selName").textContent = bot.name;
+  $("startBtn").textContent = `Start ${bot.name}`;
+  $("selDesc").textContent = bot.description;
+  $("selRules").innerHTML = bot.rules.map((r) => `<dt>${esc(r.label)}</dt><dd>${esc(r.value)}</dd>`).join("");
+  menu.querySelectorAll(".opt").forEach((el) => el.setAttribute("aria-selected", String(el.dataset.id === selected)));
+}
 
 function drawChart(points, startSol) {
   const svg = $("chart");
@@ -149,10 +296,24 @@ function drawChart(points, startSol) {
 
 function render(s) {
   state = s;
+  if (!menuBuilt && s.app.bots.length) { buildMenu(); renderPicker(); }
   const usd = (v) => (s.solUsd ? "$" + (v * s.solUsd).toFixed(2) : "");
   const live = s.mode === "live";
   $("mode").textContent = live ? "LIVE · REAL MONEY" : "PAPER · FAKE MONEY";
   $("mode").className = "badge " + (live ? "live" : "paper");
+
+  // Which bot is running
+  const app = s.app;
+  const activeName = botById(app.activeBot)?.name;
+  const running = app.phase === "running";
+  $("botDot").className = "dot " + (running ? "ok" : app.phase === "idle" ? "" : "warn");
+  $("botText").textContent =
+    app.phase === "running" ? `${activeName} · running` :
+    app.phase === "starting" ? `${activeName} · starting…` :
+    app.phase === "stopping" ? `${activeName} · stopping…` : "No bot running";
+  $("picker").hidden = app.phase !== "idle";
+  $("stopBtn").hidden = !(running || app.phase === "starting");
+  $("pauseBtn").hidden = !running;
 
   $("feedDot").className = "dot " + (s.feed.connected ? "ok" : "bad");
   $("feedText").textContent = s.feed.connected ? `Feed live (${s.feed.lastMessageAgoSec ?? "–"}s ago)` : "Feed disconnected";
@@ -162,15 +323,31 @@ function render(s) {
 
   const r = s.risk;
   const riskBits = [];
-  if (r.paused) riskBits.push("Paused");
+  if (r.paused && running) riskBits.push("Paused");
   if (r.haltedForDay) riskBits.push("Daily loss limit hit");
   if (r.cooldownSec > 0) riskBits.push(`Cooldown ${dur(r.cooldownSec)}`);
-  riskBits.push(`${r.tradesLastHour} trades/h`);
   $("riskText").textContent = riskBits.join(" · ");
+  const limitHit = r.tradesLastHour >= r.maxTradesPerHour;
+  $("hourText").textContent = limitHit
+    ? `Hourly limit reached (${r.tradesLastHour}/${r.maxTradesPerHour})`
+    : `${r.tradesLastHour}/${r.maxTradesPerHour} trades this hour`;
+  $("hourText").className = limitHit ? "limit-hit" : "";
+  $("resetHourBtn").disabled = r.tradesLastHour === 0;
   $("pauseBtn").textContent = r.paused ? "Resume" : "Pause";
+
   const notice = $("notice");
-  if (r.haltedForDay) { notice.style.display = "block"; notice.textContent = "Daily loss limit reached. No new trades until tomorrow."; }
-  else notice.style.display = "none";
+  if (r.haltedForDay) {
+    notice.className = "notice"; notice.style.display = "block";
+    notice.textContent = "Daily loss limit reached. No new trades until tomorrow.";
+  } else if (app.phase === "stopping") {
+    notice.className = "notice info"; notice.style.display = "block";
+    notice.textContent = `Stopping ${activeName}: selling open trades, then you can pick a bot again…`;
+  } else if (app.phase === "starting" && live) {
+    notice.className = "notice"; notice.style.display = "block";
+    notice.textContent = `Starting ${activeName} with real money in a few seconds. Press Stop bot to cancel.`;
+  } else notice.style.display = "none";
+
+  $("acct").textContent = `${sol(s.equitySol)} SOL ${s.solUsd ? "(" + usd(s.equitySol) + ")" : ""}, ${pctTxt(s.pnlPct)} since start, ${s.wins + s.losses} trades`;
 
   $("equity").textContent = sol(s.equitySol) + " SOL";
   $("equityUsd").textContent = usd(s.equitySol) + (s.solUsd ? ` · SOL $${s.solUsd.toFixed(2)}` : "");
@@ -190,35 +367,36 @@ function render(s) {
   drawChart(s.equityHistory, s.startSol);
 
   $("positions").innerHTML = s.positions.length
-    ? `<table><thead><tr><th>Coin</th><th class="num">Age</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Value now</th><th>Status</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th>Coin</th><th>Bot</th><th class="num">Age</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Value now</th><th>Status</th></tr></thead><tbody>` +
       s.positions.map((p) => `<tr>
         <td><a href="https://pump.fun/coin/${encodeURIComponent(p.mint)}" target="_blank" rel="noopener noreferrer">${esc(p.symbol || p.mint.slice(0, 6))}</a> <span class="muted">${esc(p.name)}</span></td>
+        <td>${esc(botShort(p.bot))}</td>
         <td class="num">${dur(p.ageSec)}</td>
         <td class="num ${cls(p.pricePct)}">${pctTxt(p.pricePct)}</td>
         <td class="num">${sol(p.costSol)}</td>
         <td class="num ${cls(p.valueSol - p.costSol)}">${sol(p.valueSol)}</td>
         <td>${p.selling ? "Selling…" : "Holding"}</td></tr>`).join("") + `</tbody></table>`
-    : `<div class="empty">No open positions. The bot is watching new coins for a momentum signal.</div>`;
+    : `<div class="empty">${running ? "No open positions. " + esc(activeName) + " is watching for its next buy." : "No open positions."}</div>`;
 
   $("trades").innerHTML = s.recentTrades.length
-    ? `<table><thead><tr><th>Time</th><th>Coin</th><th>Exit</th><th class="num">Hold</th><th class="num">P&amp;L</th><th class="num">%</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th>Time</th><th>Coin</th><th>Bot</th><th>Exit</th><th class="num">Hold</th><th class="num">P&amp;L</th><th class="num">%</th></tr></thead><tbody>` +
       s.recentTrades.map((t) => `<tr>
         <td>${time(t.closedAt)}</td>
         <td><a href="https://pump.fun/coin/${encodeURIComponent(t.mint)}" target="_blank" rel="noopener noreferrer">${esc(t.symbol || t.mint.slice(0, 6))}</a></td>
-        <td>${esc(t.reason.replace("_", " "))}</td>
+        <td>${esc(botShort(t.bot))}</td>
+        <td>${esc(t.reason.replace(/_/g, " "))}</td>
         <td class="num">${dur(t.holdSec)}</td>
         <td class="num ${cls(t.pnlSol)}">${signed(t.pnlSol)}</td>
         <td class="num ${cls(t.pnlPct)}">${pctTxt(t.pnlPct)}</td></tr>`).join("") + `</tbody></table>`
     : `<div class="empty">No closed trades yet.</div>`;
 
-  const logEl = $("log");
-  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 30;
-  logEl.innerHTML = s.logs.map((l) => `<div class="${l.level}">${time(l.t)} ${esc(l.msg)}</div>`).join("");
-  if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+  // Newest first.
+  $("log").innerHTML = s.logs.slice().reverse().map((l) => `<div class="${l.level}">${time(l.t)} ${esc(l.msg)}</div>`).join("");
 
-  const st = s.settings;
-  $("settings").textContent =
-    `Strategy: take profit +${st.takeProfitPct}% · stop loss -${st.stopLossPct}% · trailing stop ${st.trailDropPct}% after +${st.trailActivatePct}% · max hold ${st.maxHoldSec}s · max ${st.maxOpen} open · running since ${new Date(s.startedAt).toLocaleString()}`;
+  const activeBot = botById(app.activeBot);
+  $("settings").textContent = activeBot && app.phase !== "idle"
+    ? `${activeBot.name}: ` + activeBot.rules.map((x) => `${x.label.toLowerCase()} ${x.value}`).join(" · ")
+    : `Account running since ${new Date(s.startedAt).toLocaleString()}`;
 }
 
 async function refresh() {

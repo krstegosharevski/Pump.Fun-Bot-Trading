@@ -11,6 +11,13 @@ export interface SellRequest {
   /** Tokens to sell (raw units, 6 decimals). Sells always close the whole position. */
   tokensRaw: bigint;
   expectedPriceSol: number;
+  /**
+   * SOL our buy put into the curve. Paper mode only: the real on-chain curve never received
+   * our fake buy, so the simulator adds it back before quoting the sale.
+   */
+  solInCurve?: number;
+  /** Overrides SELL_SLIPPAGE_PCT, e.g. to get out at any price after repeated failures. */
+  slippagePct?: number;
 }
 
 export interface Fill {

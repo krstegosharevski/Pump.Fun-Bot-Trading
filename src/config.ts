@@ -66,6 +66,26 @@ const schema = z.object({
   TRAIL_DROP_PCT: num(10),
   MAX_HOLD_SEC: num(180),
 
+  // --- Tabak 1-1 (launch sniper, logic from chainstacklabs/pumpfun-bonkfun-bot) ---
+  /** Buy as soon as a coin is announced (their "extreme fast mode"). */
+  TABAK_EXTREME_FAST: bool(true),
+  TABAK_MAX_TOKEN_AGE_SEC: num(2),
+  /** When extreme fast is off: wait this long after launch, then buy. */
+  TABAK_WAIT_AFTER_CREATION_SEC: num(15),
+  /** Pause after each coin before taking the next one. */
+  TABAK_WAIT_BEFORE_NEW_TOKEN_SEC: num(15),
+  /** Only buy coins whose name or symbol contains this text (empty = any). */
+  TABAK_MATCH_STRING: z.string().default(""),
+  /** Only buy coins created by this wallet (empty = any). */
+  TABAK_CREATOR: z.string().default(""),
+  /** time_based = sell after TABAK_WAIT_AFTER_BUY_SEC; tp_sl = take profit / stop loss / max hold. */
+  TABAK_EXIT_STRATEGY: z.enum(["time_based", "tp_sl"]).default("time_based"),
+  TABAK_WAIT_AFTER_BUY_SEC: num(15),
+  TABAK_TAKE_PROFIT_PCT: num(40),
+  TABAK_STOP_LOSS_PCT: num(40),
+  TABAK_MAX_HOLD_SEC: num(15),
+  TABAK_MAX_TRADES_PER_HOUR: num(120),
+
   // --- Risk guard ---
   DAILY_LOSS_LIMIT_PCT: num(30),
   MAX_CONSEC_LOSSES: num(3),

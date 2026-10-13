@@ -37,13 +37,29 @@ PumpPortal websocket ─ new coin ─▶ Tracker ─ prices every 1s from Solana
 
 Every number above can be changed in `.env` (see `.env.example`).
 
+## Choosing a bot
+
+The dashboard starts with a bot picker, like choosing a model in Claude. Pick one, press **Start**, and **Stop bot** when you want to switch. Stopping sells that bot's open trades first. Both bots trade from the same account, and every trade is tagged with the bot that made it.
+
+| Bot | Style | Buys | Sells |
+|---|---|---|---|
+| **Primal 1-1** | Momentum | Watches each new coin for 45 s; buys only coins already gaining (market cap +25%, ≥3 SOL in, still rising) | Take profit +40%, stop loss −20%, trailing stop, 3 min limit |
+| **Tabak 1-1** | Launch sniper (logic from [chainstacklabs/pumpfun-bonkfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot)) | Within 2 s of launch, one coin at a time, 15 s pause between coins | 15 s after buying, whatever the price (`time_based`), or `tp_sl`: +40% / −40% / 15 s |
+
+Tabak's settings are the `TABAK_*` lines in `.env`. Compared with the original repo, Tabak:
+- watches prices on every change, not every 2 s;
+- keeps retrying a failed sale instead of giving up after 3 tries.
+
+Its launch detection (PumpPortal) and 1.5 s paper fills are slower than the Geyser setup that repo recommends, so paper results show what it can do at *our* speed. The backtester only covers Primal: Tabak would need the first second of every coin, which the recorder doesn't keep.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `npm run watch` | Watches new coins and shows which ones the strategy *would* buy. No trading. |
-| `npm run dev` | **Paper trading** with fake money, plus the dashboard at http://127.0.0.1:3000 |
-| `npm run report` | Summary of all paper trades: win rate, P&L, fees, drawdown, results by exit reason |
+| `npm run dev` | **Paper trading** with fake money. Open http://127.0.0.1:3000, pick a bot, press Start |
+| `npm run dev -- --bot tabak` | Same, but starts a bot right away (`primal` or `tabak`), useful for unattended restarts |
+| `npm run report` | Summary of all paper trades: win rate, P&L, fees, drawdown, results by bot and by exit reason. Add `-- --bot tabak` for one bot |
 | `npm run backtest` | Tests hundreds of setting combinations on recorded price data and shows the best ones |
 | `npm test` | Unit tests |
 | `npm run live:check` | Dry run of the live trade path. Builds and inspects a transaction but **never signs or sends** anything. |

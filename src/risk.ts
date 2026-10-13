@@ -49,6 +49,11 @@ export class RiskGuard {
     return this.s;
   }
 
+  /** Switch to another bot's limits; the shared state (cooldown, daily loss, trade times) is kept. */
+  setConfig(cfg: Config) {
+    this.cfg = cfg;
+  }
+
   canOpen(
     now: number,
     st: { openPositions: number; cashSol: number; tradeSizeSol?: number },
@@ -102,6 +107,11 @@ export class RiskGuard {
     return false;
   }
 
+  /** Forget the trades counted toward MAX_TRADES_PER_HOUR, so buying can resume now. */
+  resetHourlyLimit() {
+    this.s.tradeTimes = [];
+  }
+
   snapshot(now: number) {
     return {
       paused: this.paused,
@@ -109,6 +119,7 @@ export class RiskGuard {
       cooldownSec: Math.max(0, Math.round((this.s.cooldownUntil - now) / 1000)),
       consecutiveLosses: this.s.consecutiveLosses,
       tradesLastHour: this.s.tradeTimes.filter((t) => now - t < 3_600_000).length,
+      maxTradesPerHour: this.cfg.MAX_TRADES_PER_HOUR,
       dayStartEquitySol: this.s.dayStartEquitySol,
     };
   }

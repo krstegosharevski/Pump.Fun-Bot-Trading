@@ -44,6 +44,30 @@ describe("paper executor", () => {
     expect(fill.solDelta).toBeCloseTo(-(cfg.BASE_FEE_SOL + cfg.PRIORITY_FEE_SOL), 9);
   });
 
+  it("can still sell after everyone else has left the curve (our own SOL counts)", async () => {
+    const buy = await exec.buy({ mint: "x", solAmount: 0.2, expectedPriceSol: price });
+    const solInCurve = buy.priceSol * (Number(buy.tokensRaw) / 1e6);
+    // Every other holder sold: the on-chain curve is back to its empty starting state.
+    const empty = initialCurve();
+    const emptyExec = new PaperExecutor(cfg, async () => empty, () => 0.99, noWait);
+    const spot = spotPriceSol(empty);
+    const stuck = await emptyExec.sell({ mint: "x", tokensRaw: buy.tokensRaw, expectedPriceSol: spot });
+    expect(stuck.ok).toBe(false); // the old behaviour: "price moved -100%"
+    const fixed = await emptyExec.sell({ mint: "x", tokensRaw: buy.tokensRaw, expectedPriceSol: spot, solInCurve });
+    expect(fixed.ok).toBe(true);
+    expect(fixed.solDelta).toBeGreaterThan(0.1);
+    expect(fixed.priceSol / spot).toBeGreaterThan(0.9);
+  });
+
+  it("sells at any price when the slippage limit is raised", async () => {
+    const buy = await exec.buy({ mint: "x", solAmount: 0.02, expectedPriceSol: price });
+    const solInCurve = buy.priceSol * (Number(buy.tokensRaw) / 1e6);
+    const crashed = new PaperExecutor(cfg, async () => initialCurve(), () => 0.99, noWait);
+    const req = { mint: "x", tokensRaw: buy.tokensRaw, expectedPriceSol: price * 3, solInCurve };
+    expect((await crashed.sell(req)).ok).toBe(false);
+    expect((await crashed.sell({ ...req, slippagePct: 95 })).ok).toBe(true);
+  });
+
   it("rejects a buy when price ran past the slippage limit", async () => {
     const fill = await exec.buy({ mint: "x", solAmount: 0.02, expectedPriceSol: price / 2 });
     expect(fill.ok).toBe(false);
@@ -58,7 +82,7 @@ describe("portfolio accounting", () => {
     const exec = new PaperExecutor(cfg, async () => curve, () => 0.99, noWait);
     const pf = new Portfolio("paper", 0.2, 0.2, Date.now(), "test-data-unused");
     const buy = await exec.buy({ mint: "m", solAmount: 0.02, expectedPriceSol: price });
-    pf.open({ mint: "m", symbol: "TST", name: "Test", entryReason: "test" }, buy, 0);
+    pf.open({ mint: "m", symbol: "TST", name: "Test", entryReason: "test", bot: "primal" }, buy, 0);
     const sell = await exec.sell({ mint: "m", tokensRaw: buy.tokensRaw, expectedPriceSol: price });
     // Close without touching disk.
     const p = pf.positions.get("m")!;

@@ -1,8 +1,10 @@
 import fs from "node:fs";
 
-// Usage: npm run report            (paper trades)
-//        npm run report -- --live  (live trades)
+// Usage: npm run report                  (paper trades, all bots)
+//        npm run report -- --bot tabak   (only one bot: primal or tabak)
+//        npm run report -- --live        (live trades)
 const mode = process.argv.includes("--live") ? "live" : "paper";
+const botFilter = process.argv.includes("--bot") ? process.argv[process.argv.indexOf("--bot") + 1] : undefined;
 const file = `data/${mode}-trades.csv`;
 if (!fs.existsSync(file)) {
   console.log(`No ${mode} trades yet (${file} not found). Let the bot run for a while first.`);
@@ -11,12 +13,15 @@ if (!fs.existsSync(file)) {
 
 const [headerLine, ...lines] = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean);
 const header = headerLine.split(",");
-const rows = lines.map((line) => {
+const allRows = lines.map((line) => {
   const cells = line.split(",");
-  return Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ""]));
+  const row: Record<string, string> = Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ""]));
+  row.bot ||= "primal"; // trades from before bots existed
+  return row;
 });
+const rows = botFilter ? allRows.filter((r) => r.bot === botFilter) : allRows;
 if (rows.length === 0) {
-  console.log("No trades yet.");
+  console.log(botFilter ? `No trades by ${botFilter} yet.` : "No trades yet.");
   process.exit(0);
 }
 
@@ -52,7 +57,7 @@ if (fs.existsSync(stateFile)) {
 
 const sign = (x: number, d = 4) => (x >= 0 ? "+" : "") + x.toFixed(d);
 const out = [
-  `=== ${mode.toUpperCase()} TRADING REPORT ===`,
+  `=== ${mode.toUpperCase()} TRADING REPORT${botFilter ? ` — ${botFilter.toUpperCase()} ONLY` : ""} ===`,
   `Period             ${rows[0].closedAt}  →  ${rows.at(-1)!.closedAt}`,
   startLine,
   `Trades             ${rows.length}   (${wins.length} wins / ${losses.length} losses, win rate ${((wins.length / rows.length) * 100).toFixed(1)}%)`,
@@ -66,8 +71,22 @@ const out = [
   `Best trade         ${best.symbol} ${sign(n(best.pnlSol))} SOL (${sign(n(best.pnlPct), 1)}%)`,
   `Worst trade        ${worst.symbol} ${sign(n(worst.pnlSol))} SOL (${sign(n(worst.pnlPct), 1)}%)`,
   "",
-  "By exit reason:",
-].filter((l, i) => l !== "" || i > 2);
+];
+if (!startLine) out.splice(2, 1);
+
+const bots = [...new Set(rows.map((r) => r.bot))];
+if (bots.length > 1) {
+  out.push("By bot:");
+  for (const bot of bots) {
+    const rs = rows.filter((r) => r.bot === bot);
+    const w = rs.filter((r) => n(r.pnlSol) > 0).length;
+    out.push(
+      `  ${bot.padEnd(15)} ${String(rs.length).padStart(4)} trades   win ${((w / rs.length) * 100).toFixed(0).padStart(3)}%   avg ${sign(avg(rs.map((r) => n(r.pnlPct))), 1).padStart(7)}%   total ${sign(sum(rs.map((r) => n(r.pnlSol))))} SOL`,
+    );
+  }
+  out.push("");
+}
+out.push("By exit reason:");
 
 const reasons = [...new Set(rows.map((r) => r.reason))];
 for (const reason of reasons) {
