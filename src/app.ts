@@ -1,6 +1,6 @@
 import { Trader, pct, type TraderDeps } from "./bot";
 import { BOTS, botConfig, botInfo, settingsSummary, type BotId } from "./bots/registry";
-import { startEngine } from "./bots/engines";
+import { startEngine, type EngineHandle } from "./bots/engines";
 import { startDashboard } from "./dashboard/server";
 import { log, sleep } from "./log";
 
@@ -14,12 +14,12 @@ type Phase = "idle" | "starting" | "running" | "stopping";
  * Bots are picked and started from the dashboard, or with `npm run dev -- --bot <id>`.
  */
 export async function startApp(deps: TraderDeps, autoStart?: BotId) {
-  const { cfg, tracker, feed } = deps;
+  const { cfg, tracker, pools, feed } = deps;
   const trader = await Trader.create(deps);
   trader.start();
 
   let phase: Phase = "idle";
-  let active: { id: BotId; since: number; stopEngine: () => void } | null = null;
+  let active: { id: BotId; since: number; engine: EngineHandle } | null = null;
   let pending: BotId | null = null;
 
   async function start(id: BotId): Promise<void> {
@@ -44,7 +44,7 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     }
     trader.risk.setConfig(botCfg);
     trader.risk.paused = false;
-    active = { id, since: Date.now(), stopEngine: startEngine(id, { cfg, tracker, feed, trader }) };
+    active = { id, since: Date.now(), engine: startEngine(id, { cfg, tracker, pools, feed, trader }) };
     phase = "running";
     pending = null;
     log.info(`▶ ${info.name} started (${info.tagline}). About ${trader.sizeFor(botCfg).toFixed(4)} SOL per trade.`);
@@ -60,7 +60,7 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     if (phase !== "running" || !active) return;
     phase = "stopping";
     const name = botInfo(active.id).name;
-    active.stopEngine();
+    active.engine.stop();
     const open = trader.pf.positions.size;
     log.info(`■ Stopping ${name}${open ? `: selling ${open} open position(s) first` : ""}`);
     const deadline = Date.now() + STOP_TIMEOUT_MS;
@@ -85,6 +85,7 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     const runningCfg = active ? botConfig(cfg, active.id) : cfg;
     return {
       ...trader.snapshot(runningCfg),
+      hot: active?.engine.hotList?.() ?? null,
       app: {
         phase,
         activeBot: active?.id ?? pending,
@@ -119,6 +120,14 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
       trader.persist();
       log.info("Hourly trade limit reset from dashboard");
     },
+    sell: (mint) => {
+      const pos = trader.pf.positions.get(mint);
+      if (!pos) return "That position is no longer open.";
+      if (trader.isInFlight(mint)) return `${pos.symbol} is already being sold.`;
+      log.info(`Manual sell of ${pos.symbol} from dashboard`);
+      void trader.exit(mint, "manual");
+      return null;
+    },
   });
 
   const summaryTimer = setInterval(() => {
@@ -135,9 +144,10 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(summaryTimer);
-    active?.stopEngine();
+    active?.engine.stop();
     trader.shutdown();
     tracker.stop();
+    pools.stop();
     feed.stop();
     server.close();
     if (trader.pf.positions.size > 0) {

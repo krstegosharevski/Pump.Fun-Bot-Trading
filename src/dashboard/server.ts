@@ -11,9 +11,12 @@ export interface DashboardActions {
   resume(): void;
   closeAll(): void;
   resetHourlyLimit(): void;
+  /** Sell one open position now. Returns an error message, or null when the sale started. */
+  sell(mint: string): string | null;
 }
 
 const MAX_BODY_BYTES = 1024;
+const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const json = (value: unknown) =>
   JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
@@ -78,6 +81,22 @@ export function startDashboard(port: number, getState: () => unknown, actions: D
           return;
         }
         const error = actions.start(bot);
+        send(error ? 409 : 200, { ok: !error, error });
+        return;
+      }
+      if (url === "/api/sell") {
+        let mint: unknown;
+        try {
+          mint = JSON.parse(await readBody(req)).mint;
+        } catch {
+          send(400, { ok: false, error: "bad request" });
+          return;
+        }
+        if (typeof mint !== "string" || !BASE58_ADDRESS.test(mint)) {
+          send(400, { ok: false, error: "bad coin address" });
+          return;
+        }
+        const error = actions.sell(mint);
         send(error ? 409 : 200, { ok: !error, error });
         return;
       }

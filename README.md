@@ -44,9 +44,10 @@ The dashboard starts with a bot picker, like choosing a model in Claude. Pick on
 | Bot | Style | Buys | Sells |
 |---|---|---|---|
 | **Primal 1-1** | Momentum | Watches each new coin for 45 s; buys only coins already gaining (market cap +25%, ≥3 SOL in, still rising) | Take profit +40%, stop loss −20%, trailing stop, 3 min limit |
+| **Blazebit 1-1** | Hot memes | Graduated pump.fun coins on GeckoTerminal's 1h trending list ($100k–$20M market cap, ≥$30k liquidity, 1h +20%, lots of buyers), only while still climbing (5m +3% to +40%, rising on-chain) | Take profit +30%, stop loss −12%, trailing 10% after +20%, 30 min limit |
 | **Tabak 1-1** | Launch sniper (logic from [chainstacklabs/pumpfun-bonkfun-bot](https://github.com/chainstacklabs/pumpfun-bonkfun-bot)) | Within 2 s of launch, one coin at a time, 15 s pause between coins | 15 s after buying, whatever the price (`time_based`), or `tp_sl`: +40% / −40% / 15 s |
 
-Tabak's settings are the `TABAK_*` lines in `.env`. Compared with the original repo, Tabak:
+Tabak's settings are the `TABAK_*` lines in `.env`, Blazebit's the `BLAZE_*` lines. Blazebit trades on PumpSwap, where pump.fun coins go after graduating. Its fee is 1% per trade (measured on-chain), a bit less than the launch curve's 1.25%, and the deeper liquidity means stop-losses fill closer to their trigger. While it runs, the dashboard shows its **Hot list** with what it thinks of each trending coin. Compared with the original repo, Tabak:
 - watches prices on every change, not every 2 s;
 - keeps retrying a failed sale instead of giving up after 3 tries.
 

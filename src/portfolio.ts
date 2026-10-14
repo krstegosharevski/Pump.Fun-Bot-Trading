@@ -5,6 +5,9 @@ import type { Fill } from "./exec/types";
 
 const TOKEN_UNIT = 10 ** TOKEN_DECIMALS;
 
+/** Where a coin trades: pump.fun's launch curve, or PumpSwap after graduating. */
+export type Venue = "curve" | "pumpswap";
+
 export interface Position {
   mint: string;
   symbol: string;
@@ -21,6 +24,10 @@ export interface Position {
   entryReason: string;
   /** Which bot opened it (positions saved before bots existed are Primal's). */
   bot: string;
+  /** Missing = "curve". */
+  venue?: Venue;
+  /** PumpSwap pool address, for venue "pumpswap". */
+  pool?: string;
   buySig?: string;
 }
 
@@ -147,7 +154,11 @@ export class Portfolio {
     fs.renameSync(tmp, this.statePath);
   }
 
-  open(meta: { mint: string; symbol: string; name: string; entryReason: string; bot: string }, fill: Fill, now: number) {
+  open(
+    meta: { mint: string; symbol: string; name: string; entryReason: string; bot: string; venue?: Venue; pool?: string },
+    fill: Fill,
+    now: number,
+  ) {
     this.cashSol += fill.solDelta;
     this.feesPaidSol += fill.feesSol;
     this.positions.set(meta.mint, {

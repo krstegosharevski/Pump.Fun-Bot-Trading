@@ -86,6 +86,33 @@ const schema = z.object({
   TABAK_MAX_HOLD_SEC: num(15),
   TABAK_MAX_TRADES_PER_HOUR: num(120),
 
+  // --- Blazebit 1-1 (hot meme coins: trending graduated pump.fun coins) ---
+  /** How often to refresh GeckoTerminal's trending list (its free limit is ~10 calls/min). */
+  BLAZE_REFRESH_SEC: num(60),
+  /** How often to read hot coins' pools on-chain. */
+  BLAZE_POLL_MS: num(1500),
+  BLAZE_MIN_MCAP_USD: num(100_000),
+  BLAZE_MAX_MCAP_USD: num(20_000_000),
+  BLAZE_MIN_LIQUIDITY_USD: num(30_000),
+  BLAZE_MIN_VOLUME_1H_USD: num(50_000),
+  BLAZE_MIN_BUYERS_1H: num(100),
+  BLAZE_MIN_CHANGE_1H_PCT: num(20),
+  /** Buy only while still rising, but not into a vertical candle. */
+  BLAZE_MIN_CHANGE_5M_PCT: num(3),
+  BLAZE_MAX_CHANGE_5M_PCT: num(40),
+  BLAZE_RISING_LOOKBACK_SEC: num(30),
+  /** Don't buy the same coin again for this long. */
+  BLAZE_COIN_COOLDOWN_MIN: num(60),
+  BLAZE_TAKE_PROFIT_PCT: num(30),
+  BLAZE_STOP_LOSS_PCT: num(12),
+  BLAZE_TRAIL_ACTIVATE_PCT: num(20),
+  BLAZE_TRAIL_DROP_PCT: num(10),
+  BLAZE_MAX_HOLD_MIN: num(30),
+  BLAZE_MAX_OPEN_POSITIONS: num(3),
+  BLAZE_MAX_TRADES_PER_HOUR: num(10),
+  /** PumpSwap fee per trade, read from on-chain buy events: 0.20 LP + 0.05 protocol + 0.75 creator. */
+  BLAZE_POOL_FEE_PCT: num(1.0),
+
   // --- Risk guard ---
   DAILY_LOSS_LIMIT_PCT: num(30),
   MAX_CONSEC_LOSSES: num(3),

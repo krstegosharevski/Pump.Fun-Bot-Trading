@@ -4,6 +4,7 @@ import { makeConnection, redactUrl, SolPrice } from "./chain/rpc";
 import { PumpPortalFeed } from "./feed/pumpPortal";
 import { Tracker } from "./market/tracker";
 import { TickRecorder } from "./market/recorder";
+import { PoolTracker } from "./market/poolTracker";
 import { runWatchMode } from "./watch";
 import { BOTS, isBotId } from "./bots/registry";
 
@@ -31,8 +32,10 @@ async function main() {
   if (runMode === "watch") {
     runWatchMode(cfg, feed, tracker);
   } else {
+    const pools = new PoolTracker(conn, cfg);
+    pools.start();
     const { startApp } = await import("./app");
-    await startApp({ cfg, runMode, conn, solPrice, tracker, feed }, botArg);
+    await startApp({ cfg, runMode, conn, solPrice, tracker, pools, feed }, botArg);
   }
 
   feed.start();

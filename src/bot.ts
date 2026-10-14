@@ -2,13 +2,16 @@ import type { Connection } from "@solana/web3.js";
 import type { Config, RunMode } from "./config";
 import type { SolPrice } from "./chain/rpc";
 import type { PumpPortalFeed } from "./feed/pumpPortal";
-import type { TrackedCoin, Tracker } from "./market/tracker";
+import type { Tracker } from "./market/tracker";
+import type { PoolTracker } from "./market/poolTracker";
 import { TOKEN_DECIMALS } from "./chain/curve";
-import { Portfolio, type Position } from "./portfolio";
+import { Portfolio, type Position, type Venue } from "./portfolio";
+import { botConfig, isBotId } from "./bots/registry";
 import { RiskGuard, tradeSizeSol } from "./risk";
 import { shouldExit } from "./strategy/momentum";
 import { shouldExitLaunch } from "./strategy/launch";
 import { PaperExecutor } from "./exec/paper";
+import { AmmPaperExecutor } from "./exec/paperAmm";
 import type { Executor } from "./exec/types";
 import { log, recentLogs } from "./log";
 
@@ -18,6 +21,7 @@ export interface TraderDeps {
   conn: Connection;
   solPrice: SolPrice;
   tracker: Tracker;
+  pools: PoolTracker;
   feed: PumpPortalFeed;
 }
 
@@ -27,6 +31,15 @@ export interface EnterOrder {
   sizeSol: number;
   /** Price when the bot decided; the fill's slippage is measured against it. */
   expectedPriceSol: number;
+  /** Default "curve". */
+  venue?: Venue;
+  pool?: string;
+}
+
+export interface CoinRef {
+  mint: string;
+  symbol: string;
+  name: string;
 }
 
 export const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
@@ -54,7 +67,7 @@ export class Trader {
     private deps: TraderDeps,
     readonly mode: "paper" | "live",
     readonly pf: Portfolio,
-    private executor: Executor,
+    private executors: Record<Venue, Executor>,
     readonly liveBalanceSol?: () => Promise<number>,
   ) {
     this.exitFeePct = deps.cfg.PUMP_FEE_PCT + deps.cfg.PUMPPORTAL_FEE_PCT;
@@ -62,7 +75,7 @@ export class Trader {
   }
 
   static async create(deps: TraderDeps): Promise<Trader> {
-    const { cfg, conn, solPrice, tracker } = deps;
+    const { cfg, conn, solPrice, tracker, pools } = deps;
     const mode = deps.runMode === "live" ? "live" : "paper";
     let portfolio = Portfolio.load(mode);
 
@@ -75,7 +88,8 @@ export class Trader {
       portfolio.cashSol = balance;
       log.warn("================ LIVE MODE — REAL MONEY ================");
       log.warn(`Wallet ${wallet.publicKey.toBase58()}  balance ${balance.toFixed(4)} SOL`);
-      return new Trader(deps, "live", portfolio, live, () => live.balanceSol());
+      // PumpPortal routes each trade to the curve or PumpSwap itself (pool: "auto").
+      return new Trader(deps, "live", portfolio, { curve: live, pumpswap: live }, () => live.balanceSol());
     }
 
     if (!portfolio) {
@@ -87,21 +101,30 @@ export class Trader {
         `Paper account: cash ${portfolio.cashSol.toFixed(4)} SOL, ${portfolio.positions.size} open position(s). Delete data/paper-state.json to start over.`,
       );
     }
-    return new Trader(deps, "paper", portfolio, new PaperExecutor(cfg, (mint) => tracker.fetchFresh(mint)));
+    return new Trader(deps, "paper", portfolio, {
+      curve: new PaperExecutor(cfg, (mint) => tracker.fetchFresh(mint)),
+      pumpswap: new AmmPaperExecutor(cfg, (mint) => pools.fetchFresh(mint)),
+    });
   }
 
   /** Starts exit management, equity tracking and periodic saving. Runs whether or not a bot is active. */
   start() {
-    const { tracker } = this.deps;
-    for (const pos of this.pf.positions.values()) tracker.addHeld(pos.mint, pos.name, pos.symbol, pos.openedAt);
+    const { tracker, pools } = this.deps;
+    for (const pos of this.pf.positions.values()) {
+      if (pos.venue === "pumpswap" && pos.pool) pools.addHeld(pos.mint, pos.pool, pos.symbol, pos.name);
+      else tracker.addHeld(pos.mint, pos.name, pos.symbol, pos.openedAt);
+    }
 
     // Held coins stream price changes over the RPC websocket: react to each one immediately.
     tracker.onHeldUpdate((coin, now) => {
       const pos = this.pf.positions.get(coin.mint);
       if (pos) this.checkExit(pos, now);
     });
+    pools.onTick((_pools, now) => {
+      for (const pos of this.pf.positions.values()) if (pos.venue === "pumpswap") this.checkExit(pos, now);
+    });
     tracker.onTick((_coins, now) => {
-      for (const pos of this.pf.positions.values()) this.checkExit(pos, now);
+      for (const pos of this.pf.positions.values()) if (pos.venue !== "pumpswap") this.checkExit(pos, now);
       const equity = this.equitySol();
       if (this.risk.updateEquity(equity, now)) {
         log.error(`Daily loss limit (${this.deps.cfg.DAILY_LOSS_LIMIT_PCT}%) reached — no new trades until tomorrow.`);
@@ -132,20 +155,32 @@ export class Trader {
     return this.pf.positions.size === 0 && this.inFlight.size === 0;
   }
 
-  async enter(coin: TrackedCoin, order: EnterOrder) {
-    const { tracker } = this.deps;
+  private pin(mint: string, venue: Venue) {
+    if (venue === "pumpswap") this.deps.pools.pin(mint);
+    else {
+      this.deps.tracker.pin(mint);
+      this.deps.tracker.markDone(mint);
+    }
+  }
+
+  private release(mint: string, venue: Venue) {
+    if (venue === "pumpswap") this.deps.pools.release(mint);
+    else this.deps.tracker.release(mint);
+  }
+
+  async enter(coin: CoinRef, order: EnterOrder) {
     const pf = this.pf;
+    const venue = order.venue ?? "curve";
     const price = order.expectedPriceSol;
     this.inFlight.add(coin.mint);
-    tracker.pin(coin.mint);
-    tracker.markDone(coin.mint);
+    this.pin(coin.mint, venue);
     this.risk.recordBuy(Date.now());
     log.trade(`BUY  ${coin.symbol} for ${order.sizeSol.toFixed(4)} SOL — ${order.reason}  ${coin.mint}`);
     try {
-      const fill = await this.executor.buy({ mint: coin.mint, solAmount: order.sizeSol, expectedPriceSol: price });
+      const fill = await this.executors[venue].buy({ mint: coin.mint, solAmount: order.sizeSol, expectedPriceSol: price });
       if (fill.ok) {
         pf.open(
-          { mint: coin.mint, symbol: coin.symbol, name: coin.name, entryReason: order.reason, bot: order.bot },
+          { mint: coin.mint, symbol: coin.symbol, name: coin.name, entryReason: order.reason, bot: order.bot, venue, pool: order.pool },
           fill,
           Date.now(),
         );
@@ -154,12 +189,12 @@ export class Trader {
         );
       } else {
         pf.recordFailedTx(fill);
-        tracker.release(coin.mint);
+        this.release(coin.mint, venue);
         this.lastDoneAt = Date.now();
         log.warn(`  buy ${coin.symbol} failed: ${fill.error}`);
       }
     } catch (err) {
-      tracker.release(coin.mint);
+      this.release(coin.mint, venue);
       this.lastDoneAt = Date.now();
       log.error(`  buy ${coin.symbol} error: ${(err as Error).message}`);
     } finally {
@@ -181,7 +216,7 @@ export class Trader {
       `SELL ${pos.symbol} — ${reason} (${pct((pos.lastPriceSol / pos.entryPriceSol - 1) * 100)} on price)${anyPrice ? `, attempt ${failures + 1}: at any price` : ""}`,
     );
     try {
-      const fill = await this.executor.sell({
+      const fill = await this.executors[pos.venue ?? "curve"].sell({
         mint,
         tokensRaw: pos.tokensRaw,
         expectedPriceSol: pos.lastPriceSol,
@@ -192,7 +227,7 @@ export class Trader {
         this.sellFailures.delete(mint);
         const t = pf.close(mint, fill, reason, Date.now())!;
         this.risk.recordClose(t.pnlSol, Date.now());
-        this.deps.tracker.release(mint);
+        this.release(mint, pos.venue ?? "curve");
         this.lastSellAttempt.delete(mint);
         this.lastDoneAt = Date.now();
         log.trade(
@@ -215,16 +250,18 @@ export class Trader {
 
   /** Each position is sold by the rules of the bot that opened it. */
   private checkExit(pos: Position, now: number) {
-    const coin = this.deps.tracker.get(pos.mint);
-    const last = coin?.history.at(-1);
+    const { cfg, tracker, pools } = this.deps;
+    const onPool = pos.venue === "pumpswap";
+    const last = onPool ? pools.get(pos.mint)?.history.at(-1) : tracker.get(pos.mint)?.history.at(-1);
     if (last) this.pf.markPrice(pos.mint, last.priceSol);
     if (this.inFlight.has(pos.mint)) return;
     if (now - (this.lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) return;
-    const complete = coin?.complete ?? false;
+    const complete = onPool ? false : (tracker.get(pos.mint)?.complete ?? false);
+    const rules = isBotId(pos.bot) ? botConfig(cfg, pos.bot) : cfg;
     const reason =
       pos.bot === "tabak"
-        ? shouldExitLaunch(pos, pos.lastPriceSol, complete, now, this.deps.cfg)
-        : shouldExit(pos, pos.lastPriceSol, complete, now, this.deps.cfg);
+        ? shouldExitLaunch(pos, pos.lastPriceSol, complete, now, rules)
+        : shouldExit(pos, pos.lastPriceSol, complete, now, rules);
     if (reason) void this.exit(pos.mint, reason);
   }
 
@@ -279,6 +316,7 @@ export class Trader {
         symbol: p.symbol,
         name: p.name,
         bot: p.bot,
+        venue: p.venue ?? "curve",
         ageSec: Math.round((now - p.openedAt) / 1000),
         entryPriceSol: p.entryPriceSol,
         lastPriceSol: p.lastPriceSol,
@@ -296,6 +334,7 @@ export class Trader {
         tokensSeen: feed.tokensSeen,
       },
       tracker: tracker.stats(),
+      pools: this.deps.pools.stats(),
       settings: { tradeSizeSol: tradeSizeSol(cfg, equity), maxOpen: cfg.MAX_OPEN_POSITIONS },
       logs: recentLogs.slice(-40),
     };

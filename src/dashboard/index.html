@@ -98,6 +98,7 @@
   .err { color: var(--neg); font-size: 13px; }
   button.small { font-size: 12px; padding: 3px 10px; border-radius: 999px; }
   .limit-hit { color: var(--warn); font-weight: 600; }
+  .hot-tag { font-size: 11px; font-weight: 700; color: var(--neg); border: 1px solid var(--neg); border-radius: 4px; padding: 0 5px; margin-left: 4px; }
 </style>
 <script>
   // Apply the saved theme before the page paints, so it never flashes the wrong colors.
@@ -159,6 +160,11 @@
     <div class="table-wrap" id="positions"></div>
   </div>
 
+  <div class="card section" id="hotCard" hidden>
+    <h2>Hot list · 1h trending</h2>
+    <div class="table-wrap" id="hot"></div>
+  </div>
+
   <div class="two">
     <div class="card section">
       <h2>Recent trades</h2>
@@ -216,6 +222,19 @@ $("themeBtn").onclick = () => {
 paintThemeBtn();
 
 $("resetHourBtn").onclick = () => act("/api/reset-hourly");
+
+// Sell buttons are re-drawn every refresh, so listen on the table container.
+$("positions").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".sell-btn");
+  if (!btn || btn.disabled) return;
+  const live = state?.mode === "live";
+  if (!confirm(`Sell ${btn.dataset.symbol} now${live ? " with REAL money" : ""}?`)) return;
+  btn.disabled = true;
+  btn.textContent = "Selling…";
+  const r = await post("/api/sell", { mint: btn.dataset.mint });
+  if (!r.ok) alert(r.error || "Could not sell");
+  refresh();
+});
 $("pauseBtn").onclick = () => act(state?.risk.paused ? "/api/resume" : "/api/pause");
 $("closeBtn").onclick = () => {
   if (confirm("Sell every open position now and pause new buys?")) act("/api/close-all");
@@ -367,7 +386,7 @@ function render(s) {
   drawChart(s.equityHistory, s.startSol);
 
   $("positions").innerHTML = s.positions.length
-    ? `<table><thead><tr><th>Coin</th><th>Bot</th><th class="num">Age</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Value now</th><th>Status</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th>Coin</th><th>Bot</th><th class="num">Age</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Value now</th><th>Status</th><th></th></tr></thead><tbody>` +
       s.positions.map((p) => `<tr>
         <td><a href="https://pump.fun/coin/${encodeURIComponent(p.mint)}" target="_blank" rel="noopener noreferrer">${esc(p.symbol || p.mint.slice(0, 6))}</a> <span class="muted">${esc(p.name)}</span></td>
         <td>${esc(botShort(p.bot))}</td>
@@ -375,8 +394,24 @@ function render(s) {
         <td class="num ${cls(p.pricePct)}">${pctTxt(p.pricePct)}</td>
         <td class="num">${sol(p.costSol)}</td>
         <td class="num ${cls(p.valueSol - p.costSol)}">${sol(p.valueSol)}</td>
-        <td>${p.selling ? "Selling…" : "Holding"}</td></tr>`).join("") + `</tbody></table>`
+        <td>${p.selling ? "Selling…" : "Holding"}</td>
+        <td class="num"><button class="small danger sell-btn" data-mint="${esc(p.mint)}" data-symbol="${esc(p.symbol)}" ${p.selling ? "disabled" : ""}>Sell</button></td></tr>`).join("") + `</tbody></table>`
     : `<div class="empty">${running ? "No open positions. " + esc(activeName) + " is watching for its next buy." : "No open positions."}</div>`;
+
+  const usdShort = (x) => (x >= 1e6 ? "$" + (x / 1e6).toFixed(2) + "M" : "$" + Math.round(x / 1e3) + "K");
+  $("hotCard").hidden = !s.hot;
+  if (s.hot) {
+    $("hot").innerHTML = s.hot.length
+      ? `<table><thead><tr><th>Coin</th><th class="num">Market cap</th><th class="num">1h</th><th class="num">5m</th><th class="num">Liquidity</th><th>Status</th></tr></thead><tbody>` +
+        s.hot.map((h) => `<tr>
+          <td><a href="https://pump.fun/coin/${encodeURIComponent(h.mint)}" target="_blank" rel="noopener noreferrer">${esc(h.symbol)}</a>${h.hot ? ' <span class="hot-tag">HOT</span>' : ""}</td>
+          <td class="num">${usdShort(h.fdvUsd)}</td>
+          <td class="num ${cls(h.change1h)}">${pctTxt(h.change1h)}</td>
+          <td class="num ${cls(h.change5m)}">${pctTxt(h.change5m)}</td>
+          <td class="num">${usdShort(h.liquidityUsd)}</td>
+          <td class="${h.hot ? "" : "muted"}">${esc(h.status)}</td></tr>`).join("") + `</tbody></table>`
+      : `<div class="empty">Loading the trending list…</div>`;
+  }
 
   $("trades").innerHTML = s.recentTrades.length
     ? `<table><thead><tr><th>Time</th><th>Coin</th><th>Bot</th><th>Exit</th><th class="num">Hold</th><th class="num">P&amp;L</th><th class="num">%</th></tr></thead><tbody>` +
