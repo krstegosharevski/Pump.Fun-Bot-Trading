@@ -14,7 +14,7 @@ type Phase = "idle" | "starting" | "running" | "stopping";
  * Bots are picked and started from the dashboard, or with `npm run dev -- --bot <id>`.
  */
 export async function startApp(deps: TraderDeps, autoStart?: BotId) {
-  const { cfg, tracker, pools, feed } = deps;
+  const { cfg, conn, tracker, pools, feed } = deps;
   const trader = await Trader.create(deps);
   trader.start();
 
@@ -44,7 +44,7 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     }
     trader.risk.setConfig(botCfg);
     trader.risk.paused = false;
-    active = { id, since: Date.now(), engine: startEngine(id, { cfg, tracker, pools, feed, trader }) };
+    active = { id, since: Date.now(), engine: startEngine(id, { cfg, conn, tracker, pools, feed, trader }) };
     phase = "running";
     pending = null;
     log.info(`▶ ${info.name} started (${info.tagline}). About ${trader.sizeFor(botCfg).toFixed(4)} SOL per trade.`);
@@ -85,7 +85,7 @@ export async function startApp(deps: TraderDeps, autoStart?: BotId) {
     const runningCfg = active ? botConfig(cfg, active.id) : cfg;
     return {
       ...trader.snapshot(runningCfg),
-      hot: active?.engine.hotList?.() ?? null,
+      watch: active?.engine.watchList?.() ?? null,
       app: {
         phase,
         activeBot: active?.id ?? pending,

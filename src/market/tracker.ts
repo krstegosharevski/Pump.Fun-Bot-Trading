@@ -127,6 +127,40 @@ export class Tracker {
     this.pin(mint);
   }
 
+  /**
+   * Follow a coin found elsewhere (e.g. pump.fun's list) until `keepUntil`, without making
+   * it an entry candidate for the launch bots. Calling again extends the time.
+   */
+  track(mint: string, name: string, symbol: string, createdAt: number, keepUntil: number) {
+    this.seen.add(mint);
+    const existing = this.coins.get(mint);
+    if (existing) {
+      existing.shadowUntil = Math.max(existing.shadowUntil ?? 0, keepUntil);
+      return;
+    }
+    let mintKey: PublicKey;
+    try {
+      mintKey = new PublicKey(mint);
+    } catch {
+      return;
+    }
+    this.coins.set(mint, {
+      mint,
+      name,
+      symbol,
+      creator: "",
+      createdAt,
+      devBuyPct: 0,
+      firstMcapSol: 0,
+      curveAddress: bondingCurvePda(mintKey),
+      history: [],
+      complete: false,
+      held: false,
+      done: true,
+      shadowUntil: keepUntil,
+    });
+  }
+
   /** Mark a coin as held and stream its price in real time over the RPC websocket. */
   pin(mint: string) {
     const c = this.coins.get(mint);

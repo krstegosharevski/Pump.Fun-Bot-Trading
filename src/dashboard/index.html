@@ -160,9 +160,9 @@
     <div class="table-wrap" id="positions"></div>
   </div>
 
-  <div class="card section" id="hotCard" hidden>
-    <h2>Hot list · 1h trending</h2>
-    <div class="table-wrap" id="hot"></div>
+  <div class="card section" id="watchCard" hidden>
+    <h2 id="watchTitle"></h2>
+    <div class="table-wrap" id="watch"></div>
   </div>
 
   <div class="two">
@@ -394,23 +394,22 @@ function render(s) {
         <td class="num ${cls(p.pricePct)}">${pctTxt(p.pricePct)}</td>
         <td class="num">${sol(p.costSol)}</td>
         <td class="num ${cls(p.valueSol - p.costSol)}">${sol(p.valueSol)}</td>
-        <td>${p.selling ? "Selling…" : "Holding"}</td>
+        <td>${p.selling ? "Selling…" : p.stage ? "Holding · part sold" : "Holding"}</td>
         <td class="num"><button class="small danger sell-btn" data-mint="${esc(p.mint)}" data-symbol="${esc(p.symbol)}" ${p.selling ? "disabled" : ""}>Sell</button></td></tr>`).join("") + `</tbody></table>`
     : `<div class="empty">${running ? "No open positions. " + esc(activeName) + " is watching for its next buy." : "No open positions."}</div>`;
 
-  const usdShort = (x) => (x >= 1e6 ? "$" + (x / 1e6).toFixed(2) + "M" : "$" + Math.round(x / 1e3) + "K");
-  $("hotCard").hidden = !s.hot;
-  if (s.hot) {
-    $("hot").innerHTML = s.hot.length
-      ? `<table><thead><tr><th>Coin</th><th class="num">Market cap</th><th class="num">1h</th><th class="num">5m</th><th class="num">Liquidity</th><th>Status</th></tr></thead><tbody>` +
-        s.hot.map((h) => `<tr>
-          <td><a href="https://pump.fun/coin/${encodeURIComponent(h.mint)}" target="_blank" rel="noopener noreferrer">${esc(h.symbol)}</a>${h.hot ? ' <span class="hot-tag">HOT</span>' : ""}</td>
-          <td class="num">${usdShort(h.fdvUsd)}</td>
-          <td class="num ${cls(h.change1h)}">${pctTxt(h.change1h)}</td>
-          <td class="num ${cls(h.change5m)}">${pctTxt(h.change5m)}</td>
-          <td class="num">${usdShort(h.liquidityUsd)}</td>
-          <td class="${h.hot ? "" : "muted"}">${esc(h.status)}</td></tr>`).join("") + `</tbody></table>`
-      : `<div class="empty">Loading the trending list…</div>`;
+  // The running bot's own list (Blazebit: hot list, ErenTinx: final stretch).
+  $("watchCard").hidden = !s.watch;
+  if (s.watch) {
+    const w = s.watch;
+    $("watchTitle").textContent = w.title;
+    $("watch").innerHTML = w.rows.length
+      ? `<table><thead><tr><th>Coin</th>${w.columns.map((c) => `<th class="num">${esc(c)}</th>`).join("")}<th>Status</th></tr></thead><tbody>` +
+        w.rows.map((r) => `<tr>
+          <td><a href="https://pump.fun/coin/${encodeURIComponent(r.mint)}" target="_blank" rel="noopener noreferrer">${esc(r.symbol)}</a>${r.tag ? ` <span class="hot-tag">${esc(r.tag)}</span>` : ""}</td>
+          ${r.cells.map((c) => `<td class="num ${c.tone || ""}">${esc(c.text)}</td>`).join("")}
+          <td class="${r.muted ? "muted" : ""}">${esc(r.status)}</td></tr>`).join("") + `</tbody></table>`
+      : `<div class="empty">Loading the list…</div>`;
   }
 
   $("trades").innerHTML = s.recentTrades.length

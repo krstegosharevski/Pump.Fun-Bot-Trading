@@ -148,7 +148,7 @@ export class LiveExecutor implements Executor {
       tx = await this.buildTx({
         action: "sell",
         mint: req.mint,
-        amount: "100%",
+        amount: `${Math.round((req.fraction ?? 1) * 100)}%`,
         denominatedInSol: "false",
         slippage: req.slippagePct ?? cfg.SELL_SLIPPAGE_PCT,
       });
@@ -159,7 +159,7 @@ export class LiveExecutor implements Executor {
     const problem = await this.safetyCheck(tx, cfg.PRIORITY_FEE_SOL + 0.003);
     if (problem) return failedFill(`safety check refused: ${problem}`);
     const fill = await this.execute(tx, req.mint, "sell");
-    if (fill.ok) {
+    if (fill.ok && (req.fraction ?? 1) >= 1) {
       const refunded = await this.closeTokenAccount(req.mint).catch((err) => {
         log.warn(`Could not close token account (rent stays locked): ${(err as Error).message}`);
         return 0;

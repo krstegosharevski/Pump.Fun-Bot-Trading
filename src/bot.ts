@@ -10,6 +10,7 @@ import { botConfig, isBotId } from "./bots/registry";
 import { RiskGuard, tradeSizeSol } from "./risk";
 import { shouldExit } from "./strategy/momentum";
 import { shouldExitLaunch } from "./strategy/launch";
+import { shouldExitStretch } from "./strategy/stretch";
 import { PaperExecutor } from "./exec/paper";
 import { AmmPaperExecutor } from "./exec/paperAmm";
 import type { Executor } from "./exec/types";
@@ -204,7 +205,8 @@ export class Trader {
     }
   }
 
-  async exit(mint: string, reason: string) {
+  /** Sell a position, or with `fraction` < 1 only part of it (selling in steps). */
+  async exit(mint: string, reason: string, fraction = 1) {
     const pf = this.pf;
     const pos = pf.positions.get(mint);
     if (!pos || this.inFlight.has(mint)) return;
@@ -212,18 +214,27 @@ export class Trader {
     this.lastSellAttempt.set(mint, Date.now());
     const failures = this.sellFailures.get(mint) ?? 0;
     const anyPrice = failures >= ANY_PRICE_AFTER_FAILURES;
+    const partial = fraction < 1;
+    const tokensRaw = partial ? (pos.tokensRaw * BigInt(Math.round(fraction * 1000))) / 1000n : pos.tokensRaw;
     log.trade(
-      `SELL ${pos.symbol} — ${reason} (${pct((pos.lastPriceSol / pos.entryPriceSol - 1) * 100)} on price)${anyPrice ? `, attempt ${failures + 1}: at any price` : ""}`,
+      `SELL ${partial ? `${Math.round(fraction * 100)}% of ` : ""}${pos.symbol} — ${reason} (${pct((pos.lastPriceSol / pos.entryPriceSol - 1) * 100)} on price)${anyPrice ? `, attempt ${failures + 1}: at any price` : ""}`,
     );
     try {
       const fill = await this.executors[pos.venue ?? "curve"].sell({
         mint,
-        tokensRaw: pos.tokensRaw,
+        tokensRaw,
         expectedPriceSol: pos.lastPriceSol,
+        // All our remaining tokens' SOL is in the curve, even when selling only part.
         solInCurve: (pos.entryPriceSol * Number(pos.tokensRaw)) / 10 ** TOKEN_DECIMALS,
         slippagePct: anyPrice ? ANY_PRICE_SLIPPAGE_PCT : undefined,
+        fraction: partial ? fraction : undefined,
       });
-      if (fill.ok) {
+      if (fill.ok && partial) {
+        this.sellFailures.delete(mint);
+        this.lastSellAttempt.delete(mint);
+        pf.sellPart(mint, fill);
+        log.trade(`  sold ${Math.round(fraction * 100)}% of ${pos.symbol} for ${fill.solDelta.toFixed(4)} SOL; letting the rest ride`);
+      } else if (fill.ok) {
         this.sellFailures.delete(mint);
         const t = pf.close(mint, fill, reason, Date.now())!;
         this.risk.recordClose(t.pnlSol, Date.now());
@@ -258,6 +269,11 @@ export class Trader {
     if (now - (this.lastSellAttempt.get(pos.mint) ?? 0) < SELL_RETRY_MS) return;
     const complete = onPool ? false : (tracker.get(pos.mint)?.complete ?? false);
     const rules = isBotId(pos.bot) ? botConfig(cfg, pos.bot) : cfg;
+    if (pos.bot === "erentinx") {
+      const step = shouldExitStretch(pos, pos.lastPriceSol, complete, now, rules);
+      if (step) void this.exit(pos.mint, step.reason, step.kind === "part" ? step.fraction : 1);
+      return;
+    }
     const reason =
       pos.bot === "tabak"
         ? shouldExitLaunch(pos, pos.lastPriceSol, complete, now, rules)
@@ -322,7 +338,9 @@ export class Trader {
         lastPriceSol: p.lastPriceSol,
         pricePct: (p.lastPriceSol / p.entryPriceSol - 1) * 100,
         costSol: p.costSol,
-        valueSol: pf.positionValueSol(p, this.exitFeePct),
+        // What's left, plus what earlier steps already brought in.
+        valueSol: pf.positionValueSol(p, this.exitFeePct) + (p.soldSol ?? 0),
+        stage: p.stage ?? 0,
         selling: this.inFlight.has(p.mint),
       })),
       recentTrades: pf.recentTrades.slice(0, 30),

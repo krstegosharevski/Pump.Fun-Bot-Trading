@@ -113,6 +113,41 @@ const schema = z.object({
   /** PumpSwap fee per trade, read from on-chain buy events: 0.20 LP + 0.05 protocol + 0.75 creator. */
   BLAZE_POOL_FEE_PCT: num(1.0),
 
+  // --- ErenTinx 3 (Final Stretch: Axiom-style safety checks, sells in steps) ---
+  /** How often to refresh pump.fun's list of recently traded coins (its limit is 60 calls/min). */
+  ERENTINX_REFRESH_SEC: num(20),
+  /** On-chain discovery (works even when pump.fun's list is blocked): keep following any coin
+   *  that pulls in this much SOL, for this long after its last trade. */
+  ERENTINX_DISCOVER_MIN_SOL: num(5),
+  ERENTINX_DISCOVER_KEEP_MIN: num(10),
+  /** "Final stretch": this far along the bonding curve toward graduation. */
+  ERENTINX_MIN_PROGRESS_PCT: num(60),
+  ERENTINX_MAX_PROGRESS_PCT: num(95),
+  /** Skip coins with no trade for this long. */
+  ERENTINX_MAX_IDLE_SEC: num(60),
+  ERENTINX_REQUIRE_SOCIALS: bool(false),
+  /** Safety checks on who holds the supply (the bonding curve itself is excluded). */
+  ERENTINX_MAX_TOP10_PCT: num(30),
+  ERENTINX_MAX_TOP1_PCT: num(10),
+  ERENTINX_MAX_DEV_PCT: num(5),
+  /** The top-holder check needs a private RPC (e.g. a free Helius key). true = skip coins it can't check. */
+  ERENTINX_REQUIRE_TOP_HOLDERS: bool(false),
+  /** Buy only if at least this much SOL flowed in over the lookback and price is up. */
+  ERENTINX_LOOKBACK_SEC: num(60),
+  ERENTINX_MIN_INFLOW_SOL: num(2),
+  ERENTINX_STOP_LOSS_PCT: num(15),
+  /** Step 1: sell TP1_SELL_PCT of the position at +TP1_PCT. */
+  ERENTINX_TP1_PCT: num(25),
+  ERENTINX_TP1_SELL_PCT: num(50),
+  /** Step 2 (the rest): take profit at +TP2, trailing stop, or back to the entry price. */
+  ERENTINX_TP2_PCT: num(80),
+  ERENTINX_TRAIL_DROP_PCT: num(12),
+  ERENTINX_MAX_HOLD_MIN: num(20),
+  ERENTINX_SELL_ON_GRADUATION: bool(true),
+  ERENTINX_MAX_OPEN_POSITIONS: num(2),
+  ERENTINX_MAX_TRADES_PER_HOUR: num(10),
+  ERENTINX_COIN_COOLDOWN_MIN: num(60),
+
   // --- Risk guard ---
   DAILY_LOSS_LIMIT_PCT: num(30),
   MAX_CONSEC_LOSSES: num(3),

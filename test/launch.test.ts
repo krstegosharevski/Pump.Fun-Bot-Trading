@@ -68,8 +68,8 @@ describe("Tabak 1-1 exits", () => {
 });
 
 describe("bot registry", () => {
-  it("lists Primal 1-1, Tabak 1-1 and Blazebit 1-1", () => {
-    expect(BOTS.map((b) => b.name)).toEqual(["Primal 1-1", "Tabak 1-1", "Blazebit 1-1"]);
+  it("lists all four bots", () => {
+    expect(BOTS.map((b) => b.name)).toEqual(["Primal 1-1", "Tabak 1-1", "Blazebit 1-1", "ErenTinx 3"]);
     expect(isBotId("tabak")).toBe(true);
     expect(isBotId("nope")).toBe(false);
   });

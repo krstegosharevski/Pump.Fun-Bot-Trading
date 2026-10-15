@@ -94,13 +94,15 @@ export class PaperExecutor implements Executor {
     const pumpFee = grossSol * (cfg.PUMP_FEE_PCT / 100);
     const portalFee = grossSol * (cfg.PUMPPORTAL_FEE_PCT / 100);
     const feesSol = pumpFee + portalFee + this.txCostSol;
+    // The token account is only closed (rent back) when the whole position is sold.
+    const rentSol = (req.fraction ?? 1) < 1 ? 0 : cfg.ATA_RENT_SOL;
     return {
       ok: true,
-      solDelta: grossSol - feesSol + cfg.ATA_RENT_SOL,
+      solDelta: grossSol - feesSol + rentSol,
       tokensRaw: req.tokensRaw,
       priceSol,
       feesSol,
-      rentSol: cfg.ATA_RENT_SOL,
+      rentSol,
       signature: "paper",
     };
   }

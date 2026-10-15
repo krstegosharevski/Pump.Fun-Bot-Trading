@@ -1,11 +1,11 @@
 import type { Config } from "../config";
 
-export type BotId = "primal" | "tabak" | "blazebit";
+export type BotId = "primal" | "tabak" | "blazebit" | "erentinx";
 
 export interface BotInfo {
   id: BotId;
   name: string;
-  kind: "momentum" | "launch" | "hot";
+  kind: "momentum" | "launch" | "hot" | "stretch";
   tagline: string;
   description: string;
 }
@@ -35,6 +35,14 @@ export const BOTS: BotInfo[] = [
     description:
       "Trades graduated pump.fun coins on the 1-hour trending list (GeckoTerminal), only while they are still climbing with lots of buyers. Deeper liquidity than new launches, so exits fill closer to their target.",
   },
+  {
+    id: "erentinx",
+    name: "ErenTinx 3",
+    kind: "stretch",
+    tagline: "Final Stretch: safety-checked coins close to graduating, sold in steps",
+    description:
+      "Modeled on how top trading terminals like Axiom are used: watches pump.fun coins that are 60–95% of the way to graduating, skips coins whose creator or a few wallets hold too much, buys only while SOL keeps flowing in, then sells half at the first target and lets the rest ride.",
+  },
 ];
 
 export const isBotId = (x: unknown): x is BotId => BOTS.some((b) => b.id === x);
@@ -47,6 +55,9 @@ export function botInfo(id: BotId): BotInfo {
 export function botConfig(cfg: Config, id: BotId): Config {
   if (id === "tabak") {
     return { ...cfg, MAX_OPEN_POSITIONS: 1, MAX_TRADES_PER_HOUR: cfg.TABAK_MAX_TRADES_PER_HOUR };
+  }
+  if (id === "erentinx") {
+    return { ...cfg, MAX_OPEN_POSITIONS: cfg.ERENTINX_MAX_OPEN_POSITIONS, MAX_TRADES_PER_HOUR: cfg.ERENTINX_MAX_TRADES_PER_HOUR };
   }
   if (id === "blazebit") {
     return {
@@ -68,6 +79,28 @@ const size = (cfg: Config) =>
 
 /** Human-readable rules for the picker and the dashboard footer. */
 export function settingsSummary(cfg: Config, id: BotId): { label: string; value: string }[] {
+  if (id === "erentinx") {
+    return [
+      {
+        label: "Watches",
+        value: `pump.fun coins ${cfg.ERENTINX_MIN_PROGRESS_PCT}–${cfg.ERENTINX_MAX_PROGRESS_PCT}% of the way to graduating, traded in the last ${cfg.ERENTINX_MAX_IDLE_SEC}s${cfg.ERENTINX_REQUIRE_SOCIALS ? ", with socials" : ""}`,
+      },
+      {
+        label: "Safety",
+        value: `Creator holds ≤${cfg.ERENTINX_MAX_DEV_PCT}%, top 10 wallets ≤${cfg.ERENTINX_MAX_TOP10_PCT}%, no single wallet >${cfg.ERENTINX_MAX_TOP1_PCT}% (top-holder check needs a private RPC)`,
+      },
+      { label: "Buys", value: `When ≥${cfg.ERENTINX_MIN_INFLOW_SOL} SOL flowed in over ${cfg.ERENTINX_LOOKBACK_SEC}s and the price is up` },
+      {
+        label: "Sells",
+        value: `Stop loss −${cfg.ERENTINX_STOP_LOSS_PCT}%. At +${cfg.ERENTINX_TP1_PCT}% sells ${cfg.ERENTINX_TP1_SELL_PCT}%; the rest at +${cfg.ERENTINX_TP2_PCT}%, a ${cfg.ERENTINX_TRAIL_DROP_PCT}% drop from the peak, back at the entry price, ${cfg.ERENTINX_SELL_ON_GRADUATION ? "graduation, " : ""}or ${cfg.ERENTINX_MAX_HOLD_MIN} min`,
+      },
+      { label: "Size", value: size(cfg) },
+      {
+        label: "Limits",
+        value: `Up to ${cfg.ERENTINX_MAX_OPEN_POSITIONS} open, ${cfg.ERENTINX_MAX_TRADES_PER_HOUR} trades per hour, same coin again after ${cfg.ERENTINX_COIN_COOLDOWN_MIN} min`,
+      },
+    ];
+  }
   if (id === "blazebit") {
     const usd = (x: number) => (x >= 1e6 ? `$${x / 1e6}M` : `$${x / 1e3}k`);
     return [

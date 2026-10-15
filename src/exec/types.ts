@@ -18,6 +18,8 @@ export interface SellRequest {
   solInCurve?: number;
   /** Overrides SELL_SLIPPAGE_PCT, e.g. to get out at any price after repeated failures. */
   slippagePct?: number;
+  /** Selling only part of the position (0–1). The token account stays open, so no rent comes back. */
+  fraction?: number;
 }
 
 export interface Fill {

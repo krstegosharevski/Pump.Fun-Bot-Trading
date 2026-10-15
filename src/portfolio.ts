@@ -28,6 +28,10 @@ export interface Position {
   venue?: Venue;
   /** PumpSwap pool address, for venue "pumpswap". */
   pool?: string;
+  /** Selling in steps: how many steps are done, and what they brought in so far. */
+  stage?: number;
+  soldSol?: number;
+  soldFeesSol?: number;
   buySig?: string;
 }
 
@@ -175,6 +179,21 @@ export class Portfolio {
     });
   }
 
+  /**
+   * Sell part of a position. The position keeps its original cost; what this sale brings
+   * in is remembered, so the final P&L covers every step.
+   */
+  sellPart(mint: string, fill: Fill) {
+    const pos = this.positions.get(mint);
+    if (!pos) return;
+    this.cashSol += fill.solDelta;
+    this.feesPaidSol += fill.feesSol;
+    pos.tokensRaw -= fill.tokensRaw;
+    pos.soldSol = (pos.soldSol ?? 0) + fill.solDelta;
+    pos.soldFeesSol = (pos.soldFeesSol ?? 0) + fill.feesSol;
+    pos.stage = (pos.stage ?? 0) + 1;
+  }
+
   close(mint: string, fill: Fill, reason: string, now: number): ClosedTrade | null {
     const pos = this.positions.get(mint);
     if (!pos) return null;
@@ -182,7 +201,8 @@ export class Portfolio {
     this.cashSol += fill.solDelta;
     this.feesPaidSol += fill.feesSol;
 
-    const pnlSol = fill.solDelta - pos.costSol;
+    const proceedsSol = (pos.soldSol ?? 0) + fill.solDelta;
+    const pnlSol = proceedsSol - pos.costSol;
     const invested = pos.costSol - pos.rentSol;
     const trade: ClosedTrade = {
       mint,
@@ -193,11 +213,11 @@ export class Portfolio {
       entryPriceSol: pos.entryPriceSol,
       exitPriceSol: fill.priceSol,
       costSol: pos.costSol,
-      proceedsSol: fill.solDelta,
+      proceedsSol,
       pnlSol,
       pnlPct: invested > 0 ? (pnlSol / invested) * 100 : 0,
-      feesSol: pos.buyFeesSol + fill.feesSol,
-      reason,
+      feesSol: pos.buyFeesSol + (pos.soldFeesSol ?? 0) + fill.feesSol,
+      reason: pos.stage ? `tp1>${reason}` : reason,
       entryReason: pos.entryReason,
       bot: pos.bot,
       buySig: pos.buySig,
